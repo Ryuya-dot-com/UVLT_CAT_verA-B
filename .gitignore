@@ -2,9 +2,12 @@ node_modules/
 dist/
 .wrangler/
 .wrangler-dry-run/
-.dev.vars
+.dev.vars*
 .env
 .env.*
+*.secrets.env
+.envrc
+.direnv/
 !.dev.vars.example
 !.env.example
 .DS_Store
@@ -17,6 +20,9 @@ dist/
 /tools/
 /test/*
 !/test/randomization-design.test.mjs
+!/test/activation-sql.test.mjs
+!/test/attrition-reserve-simulation.test.mjs
+!/test/version-workflow-validation.test.mjs
 /index.html
 cloudflare/private/
 cloudflare/exports/
@@ -30,6 +36,7 @@ cloudflare/worker-configuration.d.ts
 *.xlsx
 *.xls
 *.csv
+!/design/results/attrition-reserve-results.csv
 *.tsv
 *.parquet
 *.feather

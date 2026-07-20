@@ -1,0 +1,1727 @@
+{
+  "schemaVersion": "uvlt-fixed-ab-attrition-reserve-simulation-1",
+  "simulationAlgorithm": "xoshiro128starstar-independent-cell-bernoulli-v1",
+  "publicSimulationSeed": "uvlt-fixed-ab-public-attrition-reserve-simulation-v1",
+  "publicSimulationSeedPurpose": "Public reproducibility seed for this planning simulation only; never use it for participant allocation.",
+  "softwareEnvironment": {
+    "node": "24.9.0 (runner fails closed on every other version)",
+    "dependencies": "Node.js built-ins only"
+  },
+  "monteCarloReplicatesPerScenario": 20000,
+  "targetCompletersPerL1": 300,
+  "startsPerL1": [
+    300,
+    360,
+    420
+  ],
+  "attritionRates": [
+    0,
+    0.05,
+    0.1,
+    0.15,
+    0.2
+  ],
+  "l1Interpretation": "Results apply separately and symmetrically to Japanese-L1 and Vietnamese-L1 strata under the same model.",
+  "estimandNotes": {
+    "targetProbability": "Exact binomial probability is primary under the stated model; Monte Carlo estimate and Wilson interval audit the simulation.",
+    "balance": "Balance summaries are unconditional across all simulated completer sets and use nearest-rank empirical p05, p50, and p95 quantiles.",
+    "bothL1Strata": "The two-stratum probability is the squared per-L1 exact probability and assumes independent attrition between strata."
+  },
+  "assumptions": [
+    "Each start completes independently with the scenario's common attrition probability.",
+    "Attrition is identical across L1 strata, routes, option layouts, and route-by-layout cells.",
+    "Every capacity is a multiple of 60 and begins with an equal number of starts in all 60 route-by-layout cells.",
+    "The balanced-cell audit defines its descriptive threshold as 300/60 = 5 completers per route-by-layout cell; overall target attainment does not require every cell to meet this threshold.",
+    "The simulation models completion status only; it contains no stimuli, participant data, allocation schedule, or operational randomization seed."
+  ],
+  "limitations": [
+    "These scenarios inform but do not determine the final sample size.",
+    "Pilot-estimated overall and differential attrition, exclusions, invalid submissions, and their uncertainty must be added before preregistration.",
+    "If reserve capacity is selected, the production schedule and D1 capacity must be extended and independently validated before recruitment."
+  ],
+  "results": [
+    {
+      "startsPerL1": 300,
+      "reserveStartsPerL1": 0,
+      "attritionRate": 0,
+      "completionRate": 1,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 30,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 50,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 5
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 1,
+        "exactBinomialShortfallProbabilityPerL1": 0,
+        "exactBinomialProbabilityBothIndependentL1Strata": 1,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 300,
+        "p05": 300,
+        "p50": 300,
+        "p95": 300
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 30,
+            "p05": 30,
+            "p50": 30,
+            "p95": 30
+          },
+          "maximumCount": {
+            "mean": 30,
+            "p05": 30,
+            "p50": 30,
+            "p95": 30
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 50,
+            "p05": 50,
+            "p50": 50,
+            "p95": 50
+          },
+          "maximumCount": {
+            "mean": 50,
+            "p05": 50,
+            "p50": 50,
+            "p95": 50
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 5,
+            "p05": 5,
+            "p50": 5,
+            "p95": 5
+          },
+          "maximumCount": {
+            "mean": 5,
+            "p05": 5,
+            "p50": 5,
+            "p95": 5
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "emptyCellCount": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 1,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 1,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 1
+        }
+      }
+    },
+    {
+      "startsPerL1": 300,
+      "reserveStartsPerL1": 0,
+      "attritionRate": 0.05,
+      "completionRate": 0.95,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 30,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 50,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 5
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 2.0753033477680785e-7,
+        "exactBinomialShortfallProbabilityPerL1": 0.9999997924696652,
+        "exactBinomialProbabilityBothIndependentL1Strata": 4.3068839852573945e-14,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0.9999999999999568,
+        "monteCarlo": {
+          "successes": 0,
+          "replicates": 20000,
+          "estimate": 0,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0,
+            "upper": 0.00019204
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 285.00065,
+        "p05": 278,
+        "p50": 285,
+        "p95": 291
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 26.47555,
+            "p05": 25,
+            "p50": 27,
+            "p95": 28
+          },
+          "maximumCount": {
+            "mean": 29.9107,
+            "p05": 29,
+            "p50": 30,
+            "p95": 30
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.43515,
+            "p05": 2,
+            "p50": 3,
+            "p95": 5
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 45.4388,
+            "p05": 43,
+            "p50": 46,
+            "p95": 47
+          },
+          "maximumCount": {
+            "mean": 49.22455,
+            "p05": 48,
+            "p50": 49,
+            "p95": 50
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.78575,
+            "p05": 2,
+            "p50": 4,
+            "p95": 6
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 3.18815,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "maximumCount": {
+            "mean": 5,
+            "p05": 5,
+            "p50": 5,
+            "p95": 5
+          },
+          "maximumMinusMinimum": {
+            "mean": 1.81185,
+            "p05": 1,
+            "p50": 2,
+            "p95": 3
+          },
+          "emptyCellCount": {
+            "mean": 0.0001,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.9999,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 2.075303347768083e-7,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0
+        }
+      }
+    },
+    {
+      "startsPerL1": 300,
+      "reserveStartsPerL1": 0,
+      "attritionRate": 0.1,
+      "completionRate": 0.9,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 30,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 50,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 5
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 1.8739277038847933e-14,
+        "exactBinomialShortfallProbabilityPerL1": 0.9999999999999812,
+        "exactBinomialProbabilityBothIndependentL1Strata": 3.5116050393869336e-28,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0.9999999999999999,
+        "monteCarlo": {
+          "successes": 0,
+          "replicates": 20000,
+          "estimate": 0,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0,
+            "upper": 0.00019204
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 270.03895,
+        "p05": 261,
+        "p50": 270,
+        "p95": 278
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 24.3006,
+            "p05": 22,
+            "p50": 24,
+            "p95": 26
+          },
+          "maximumCount": {
+            "mean": 29.2185,
+            "p05": 28,
+            "p50": 29,
+            "p95": 30
+          },
+          "maximumMinusMinimum": {
+            "mean": 4.9179,
+            "p05": 3,
+            "p50": 5,
+            "p95": 7
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 42.2148,
+            "p05": 39,
+            "p50": 42,
+            "p95": 45
+          },
+          "maximumCount": {
+            "mean": 47.51665,
+            "p05": 46,
+            "p50": 48,
+            "p95": 49
+          },
+          "maximumMinusMinimum": {
+            "mean": 5.30185,
+            "p05": 3,
+            "p50": 5,
+            "p95": 8
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 2.576,
+            "p05": 2,
+            "p50": 3,
+            "p95": 3
+          },
+          "maximumCount": {
+            "mean": 5,
+            "p05": 5,
+            "p50": 5,
+            "p95": 5
+          },
+          "maximumMinusMinimum": {
+            "mean": 2.424,
+            "p05": 2,
+            "p50": 2,
+            "p95": 3
+          },
+          "emptyCellCount": {
+            "mean": 0.0003,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.9997,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 1.8739277038847864e-14,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0
+        }
+      }
+    },
+    {
+      "startsPerL1": 300,
+      "reserveStartsPerL1": 0,
+      "attritionRate": 0.15,
+      "completionRate": 0.85,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 30,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 50,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 5
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 6.69387678967901e-22,
+        "exactBinomialShortfallProbabilityPerL1": 1,
+        "exactBinomialProbabilityBothIndependentL1Strata": 4.480798647540337e-43,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 1,
+        "monteCarlo": {
+          "successes": 0,
+          "replicates": 20000,
+          "estimate": 0,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0,
+            "upper": 0.00019204
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 255.01265,
+        "p05": 245,
+        "p50": 255,
+        "p95": 265
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 22.33675,
+            "p05": 20,
+            "p50": 22,
+            "p95": 24
+          },
+          "maximumCount": {
+            "mean": 28.23635,
+            "p05": 27,
+            "p50": 28,
+            "p95": 30
+          },
+          "maximumMinusMinimum": {
+            "mean": 5.8996,
+            "p05": 4,
+            "p50": 6,
+            "p95": 9
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 39.20565,
+            "p05": 36,
+            "p50": 39,
+            "p95": 42
+          },
+          "maximumCount": {
+            "mean": 45.55555,
+            "p05": 43,
+            "p50": 46,
+            "p95": 48
+          },
+          "maximumMinusMinimum": {
+            "mean": 6.3499,
+            "p05": 3,
+            "p50": 6,
+            "p95": 10
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 2.07,
+            "p05": 1,
+            "p50": 2,
+            "p95": 3
+          },
+          "maximumCount": {
+            "mean": 5,
+            "p05": 5,
+            "p50": 5,
+            "p95": 5
+          },
+          "maximumMinusMinimum": {
+            "mean": 2.93,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "emptyCellCount": {
+            "mean": 0.0041,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.9959,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 6.693876789678947e-22,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0
+        }
+      }
+    },
+    {
+      "startsPerL1": 300,
+      "reserveStartsPerL1": 0,
+      "attritionRate": 0.2,
+      "completionRate": 0.8,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 30,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 50,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 5
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 8.452712498170639e-30,
+        "exactBinomialShortfallProbabilityPerL1": 1,
+        "exactBinomialProbabilityBothIndependentL1Strata": 7.144834857673012e-59,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 1,
+        "monteCarlo": {
+          "successes": 0,
+          "replicates": 20000,
+          "estimate": 0,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0,
+            "upper": 0.00019204
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 240.05575,
+        "p05": 228,
+        "p50": 240,
+        "p95": 251
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 20.49195,
+            "p05": 18,
+            "p50": 21,
+            "p95": 23
+          },
+          "maximumCount": {
+            "mean": 27.1567,
+            "p05": 25,
+            "p50": 27,
+            "p95": 29
+          },
+          "maximumMinusMinimum": {
+            "mean": 6.66475,
+            "p05": 4,
+            "p50": 7,
+            "p95": 10
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 36.3494,
+            "p05": 33,
+            "p50": 36,
+            "p95": 39
+          },
+          "maximumCount": {
+            "mean": 43.4542,
+            "p05": 41,
+            "p50": 43,
+            "p95": 46
+          },
+          "maximumMinusMinimum": {
+            "mean": 7.1048,
+            "p05": 3,
+            "p50": 7,
+            "p95": 11
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 1.675,
+            "p05": 1,
+            "p50": 2,
+            "p95": 2
+          },
+          "maximumCount": {
+            "mean": 5,
+            "p05": 5,
+            "p50": 5,
+            "p95": 5
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.325,
+            "p05": 3,
+            "p50": 3,
+            "p95": 4
+          },
+          "emptyCellCount": {
+            "mean": 0.02,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.98015,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 8.452712498170685e-30,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0
+        }
+      }
+    },
+    {
+      "startsPerL1": 360,
+      "reserveStartsPerL1": 60,
+      "attritionRate": 0,
+      "completionRate": 1,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 36,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 60,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 6
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 1,
+        "exactBinomialShortfallProbabilityPerL1": 0,
+        "exactBinomialProbabilityBothIndependentL1Strata": 1,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 360,
+        "p05": 360,
+        "p50": 360,
+        "p95": 360
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 36,
+            "p05": 36,
+            "p50": 36,
+            "p95": 36
+          },
+          "maximumCount": {
+            "mean": 36,
+            "p05": 36,
+            "p50": 36,
+            "p95": 36
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 60,
+            "p05": 60,
+            "p50": 60,
+            "p95": 60
+          },
+          "maximumCount": {
+            "mean": 60,
+            "p05": 60,
+            "p50": 60,
+            "p95": 60
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 6,
+            "p05": 6,
+            "p50": 6,
+            "p95": 6
+          },
+          "maximumCount": {
+            "mean": 6,
+            "p05": 6,
+            "p50": 6,
+            "p95": 6
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "emptyCellCount": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 1,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 1,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 1
+        }
+      }
+    },
+    {
+      "startsPerL1": 360,
+      "reserveStartsPerL1": 60,
+      "attritionRate": 0.05,
+      "completionRate": 0.95,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 36,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 60,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 6
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 0.9999999999999998,
+        "exactBinomialShortfallProbabilityPerL1": 9.745187639440399e-17,
+        "exactBinomialProbabilityBothIndependentL1Strata": 0.9999999999999996,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 1.9490375278880798e-16,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 342.05905,
+        "p05": 335,
+        "p50": 342,
+        "p95": 349
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 32.01315,
+            "p05": 30,
+            "p50": 32,
+            "p95": 33
+          },
+          "maximumCount": {
+            "mean": 35.81425,
+            "p05": 35,
+            "p50": 36,
+            "p95": 36
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.8011,
+            "p05": 2,
+            "p50": 4,
+            "p95": 6
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 54.7513,
+            "p05": 52,
+            "p50": 55,
+            "p95": 57
+          },
+          "maximumCount": {
+            "mean": 58.9314,
+            "p05": 58,
+            "p50": 59,
+            "p95": 60
+          },
+          "maximumMinusMinimum": {
+            "mean": 4.1801,
+            "p05": 2,
+            "p50": 4,
+            "p95": 7
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 4.01175,
+            "p05": 3,
+            "p50": 4,
+            "p95": 5
+          },
+          "maximumCount": {
+            "mean": 6,
+            "p05": 6,
+            "p50": 6,
+            "p95": 6
+          },
+          "maximumMinusMinimum": {
+            "mean": 1.98825,
+            "p05": 1,
+            "p50": 2,
+            "p95": 3
+          },
+          "emptyCellCount": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 1,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 0.13541986207643417,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0.13955
+        }
+      }
+    },
+    {
+      "startsPerL1": 360,
+      "reserveStartsPerL1": 60,
+      "attritionRate": 0.1,
+      "completionRate": 0.9,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 36,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 60,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 6
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 0.9999662654995256,
+        "exactBinomialShortfallProbabilityPerL1": 0.000033734500474334236,
+        "exactBinomialProbabilityBothIndependentL1Strata": 0.9999325321370678,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0.00006746786293214621,
+        "monteCarlo": {
+          "successes": 19999,
+          "replicates": 20000,
+          "estimate": 0.99995,
+          "standardError": 0.00005,
+          "wilson95": {
+            "lower": 0.99971681,
+            "upper": 0.99999117
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 323.92915,
+        "p05": 314,
+        "p50": 324,
+        "p95": 333
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 29.4488,
+            "p05": 27,
+            "p50": 30,
+            "p95": 31
+          },
+          "maximumCount": {
+            "mean": 34.85675,
+            "p05": 34,
+            "p50": 35,
+            "p95": 36
+          },
+          "maximumMinusMinimum": {
+            "mean": 5.40795,
+            "p05": 3,
+            "p50": 5,
+            "p95": 8
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 50.9544,
+            "p05": 48,
+            "p50": 51,
+            "p95": 54
+          },
+          "maximumCount": {
+            "mean": 56.7592,
+            "p05": 55,
+            "p50": 57,
+            "p95": 59
+          },
+          "maximumMinusMinimum": {
+            "mean": 5.8048,
+            "p05": 3,
+            "p50": 6,
+            "p95": 9
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 3.30315,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "maximumCount": {
+            "mean": 6,
+            "p05": 6,
+            "p50": 6,
+            "p95": 6
+          },
+          "maximumMinusMinimum": {
+            "mean": 2.69685,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "emptyCellCount": {
+            "mean": 0.00005,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.99995,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 0.0006890145215808188,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0.00045
+        }
+      }
+    },
+    {
+      "startsPerL1": 360,
+      "reserveStartsPerL1": 60,
+      "attritionRate": 0.15,
+      "completionRate": 0.85,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 36,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 60,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 6
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 0.8317602488949231,
+        "exactBinomialShortfallProbabilityPerL1": 0.1682397511050769,
+        "exactBinomialProbabilityBothIndependentL1Strata": 0.6918251116417443,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0.3081748883582556,
+        "monteCarlo": {
+          "successes": 16631,
+          "replicates": 20000,
+          "estimate": 0.83155,
+          "standardError": 0.00264646,
+          "wilson95": {
+            "lower": 0.82629948,
+            "upper": 0.83667318
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 305.95395,
+        "p05": 295,
+        "p50": 306,
+        "p95": 317
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 27.1358,
+            "p05": 25,
+            "p50": 27,
+            "p95": 29
+          },
+          "maximumCount": {
+            "mean": 33.6364,
+            "p05": 32,
+            "p50": 34,
+            "p95": 35
+          },
+          "maximumMinusMinimum": {
+            "mean": 6.5006,
+            "p05": 4,
+            "p50": 6,
+            "p95": 9
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 47.3992,
+            "p05": 44,
+            "p50": 48,
+            "p95": 50
+          },
+          "maximumCount": {
+            "mean": 54.3597,
+            "p05": 52,
+            "p50": 54,
+            "p95": 57
+          },
+          "maximumMinusMinimum": {
+            "mean": 6.9605,
+            "p05": 3,
+            "p50": 7,
+            "p95": 11
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 2.73115,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "maximumCount": {
+            "mean": 6,
+            "p05": 6,
+            "p50": 6,
+            "p95": 6
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.26885,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "emptyCellCount": {
+            "mean": 0.0005,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.9995,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 2.558353986703689e-7,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0
+        }
+      }
+    },
+    {
+      "startsPerL1": 360,
+      "reserveStartsPerL1": 60,
+      "attritionRate": 0.2,
+      "completionRate": 0.8,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 36,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 60,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 6
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 0.062492055374066796,
+        "exactBinomialShortfallProbabilityPerL1": 0.9375079446259331,
+        "exactBinomialProbabilityBothIndependentL1Strata": 0.0039052569848754305,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0.9960947430151246,
+        "monteCarlo": {
+          "successes": 1211,
+          "replicates": 20000,
+          "estimate": 0.06055,
+          "standardError": 0.00168647,
+          "wilson95": {
+            "lower": 0.05732821,
+            "upper": 0.06394057
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 287.9575,
+        "p05": 275,
+        "p50": 288,
+        "p95": 300
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 24.96325,
+            "p05": 22,
+            "p50": 25,
+            "p95": 27
+          },
+          "maximumCount": {
+            "mean": 32.27005,
+            "p05": 30,
+            "p50": 32,
+            "p95": 34
+          },
+          "maximumMinusMinimum": {
+            "mean": 7.3068,
+            "p05": 4,
+            "p50": 7,
+            "p95": 11
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 43.97325,
+            "p05": 40,
+            "p50": 44,
+            "p95": 47
+          },
+          "maximumCount": {
+            "mean": 51.8065,
+            "p05": 49,
+            "p50": 52,
+            "p95": 55
+          },
+          "maximumMinusMinimum": {
+            "mean": 7.83325,
+            "p05": 4,
+            "p50": 8,
+            "p95": 12
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 2.26325,
+            "p05": 1,
+            "p50": 2,
+            "p95": 3
+          },
+          "maximumCount": {
+            "mean": 6,
+            "p05": 6,
+            "p50": 6,
+            "p95": 6
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.73675,
+            "p05": 3,
+            "p50": 4,
+            "p95": 5
+          },
+          "emptyCellCount": {
+            "mean": 0.00375,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.99625,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 9.745314011399948e-12,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0
+        }
+      }
+    },
+    {
+      "startsPerL1": 420,
+      "reserveStartsPerL1": 120,
+      "attritionRate": 0,
+      "completionRate": 1,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 42,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 70,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 7
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 1,
+        "exactBinomialShortfallProbabilityPerL1": 0,
+        "exactBinomialProbabilityBothIndependentL1Strata": 1,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 420,
+        "p05": 420,
+        "p50": 420,
+        "p95": 420
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 42,
+            "p05": 42,
+            "p50": 42,
+            "p95": 42
+          },
+          "maximumCount": {
+            "mean": 42,
+            "p05": 42,
+            "p50": 42,
+            "p95": 42
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 70,
+            "p05": 70,
+            "p50": 70,
+            "p95": 70
+          },
+          "maximumCount": {
+            "mean": 70,
+            "p05": 70,
+            "p50": 70,
+            "p95": 70
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 7,
+            "p05": 7,
+            "p50": 7,
+            "p95": 7
+          },
+          "maximumCount": {
+            "mean": 7,
+            "p05": 7,
+            "p50": 7,
+            "p95": 7
+          },
+          "maximumMinusMinimum": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "emptyCellCount": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 1,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 1,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 1
+        }
+      }
+    },
+    {
+      "startsPerL1": 420,
+      "reserveStartsPerL1": 120,
+      "attritionRate": 0.05,
+      "completionRate": 0.95,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 42,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 70,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 7
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 1,
+        "exactBinomialShortfallProbabilityPerL1": 1.3475862865814147e-56,
+        "exactBinomialProbabilityBothIndependentL1Strata": 1,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 2.6951725731628294e-56,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 399.03245,
+        "p05": 392,
+        "p50": 399,
+        "p95": 406
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 37.54735,
+            "p05": 36,
+            "p50": 38,
+            "p95": 39
+          },
+          "maximumCount": {
+            "mean": 41.69905,
+            "p05": 41,
+            "p50": 42,
+            "p95": 42
+          },
+          "maximumMinusMinimum": {
+            "mean": 4.1517,
+            "p05": 2,
+            "p50": 4,
+            "p95": 6
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 64.07825,
+            "p05": 62,
+            "p50": 64,
+            "p95": 66
+          },
+          "maximumCount": {
+            "mean": 68.6065,
+            "p05": 67,
+            "p50": 69,
+            "p95": 70
+          },
+          "maximumMinusMinimum": {
+            "mean": 4.52825,
+            "p05": 2,
+            "p50": 4,
+            "p95": 7
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 4.8509,
+            "p05": 4,
+            "p50": 5,
+            "p95": 6
+          },
+          "maximumCount": {
+            "mean": 7,
+            "p05": 7,
+            "p50": 7,
+            "p95": 7
+          },
+          "maximumMinusMinimum": {
+            "mean": 2.1491,
+            "p05": 1,
+            "p50": 2,
+            "p95": 3
+          },
+          "emptyCellCount": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 1,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 0.7978400797589624,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0.7996
+        }
+      }
+    },
+    {
+      "startsPerL1": 420,
+      "reserveStartsPerL1": 120,
+      "attritionRate": 0.1,
+      "completionRate": 0.9,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 42,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 70,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 7
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 1,
+        "exactBinomialShortfallProbabilityPerL1": 4.0817036946761076e-27,
+        "exactBinomialProbabilityBothIndependentL1Strata": 1,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 8.163407389352215e-27,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 377.9869,
+        "p05": 368,
+        "p50": 378,
+        "p95": 388
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 34.61435,
+            "p05": 32,
+            "p50": 35,
+            "p95": 37
+          },
+          "maximumCount": {
+            "mean": 40.50675,
+            "p05": 39,
+            "p50": 41,
+            "p95": 42
+          },
+          "maximumMinusMinimum": {
+            "mean": 5.8924,
+            "p05": 4,
+            "p50": 6,
+            "p95": 9
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 59.69435,
+            "p05": 56,
+            "p50": 60,
+            "p95": 62
+          },
+          "maximumCount": {
+            "mean": 66.01695,
+            "p05": 64,
+            "p50": 66,
+            "p95": 68
+          },
+          "maximumMinusMinimum": {
+            "mean": 6.3226,
+            "p05": 3,
+            "p50": 6,
+            "p95": 10
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 4.03835,
+            "p05": 3,
+            "p50": 4,
+            "p95": 5
+          },
+          "maximumCount": {
+            "mean": 7,
+            "p05": 7,
+            "p50": 7,
+            "p95": 7
+          },
+          "maximumMinusMinimum": {
+            "mean": 2.96165,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "emptyCellCount": {
+            "mean": 0,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 1,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 0.20979227119877325,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0.20645
+        }
+      }
+    },
+    {
+      "startsPerL1": 420,
+      "reserveStartsPerL1": 120,
+      "attritionRate": 0.15,
+      "completionRate": 0.85,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 42,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 70,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 7
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 0.9999999999996004,
+        "exactBinomialShortfallProbabilityPerL1": 3.995108119573546e-13,
+        "exactBinomialProbabilityBothIndependentL1Strata": 0.9999999999992009,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 7.990216239145497e-13,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 356.9863,
+        "p05": 345,
+        "p50": 357,
+        "p95": 369
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 31.98035,
+            "p05": 29,
+            "p50": 32,
+            "p95": 34
+          },
+          "maximumCount": {
+            "mean": 39.00485,
+            "p05": 37,
+            "p50": 39,
+            "p95": 41
+          },
+          "maximumMinusMinimum": {
+            "mean": 7.0245,
+            "p05": 4,
+            "p50": 7,
+            "p95": 10
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 55.6244,
+            "p05": 52,
+            "p50": 56,
+            "p95": 59
+          },
+          "maximumCount": {
+            "mean": 63.12645,
+            "p05": 60,
+            "p50": 63,
+            "p95": 66
+          },
+          "maximumMinusMinimum": {
+            "mean": 7.50205,
+            "p05": 4,
+            "p50": 7,
+            "p95": 12
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 3.4243,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "maximumCount": {
+            "mean": 7,
+            "p05": 7,
+            "p50": 7,
+            "p95": 7
+          },
+          "maximumMinusMinimum": {
+            "mean": 3.5757,
+            "p05": 3,
+            "p50": 4,
+            "p95": 5
+          },
+          "emptyCellCount": {
+            "mean": 0.0001,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.9999,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 0.010075503625459559,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0.01005
+        }
+      }
+    },
+    {
+      "startsPerL1": 420,
+      "reserveStartsPerL1": 120,
+      "attritionRate": 0.2,
+      "completionRate": 0.8,
+      "startingDesign": {
+        "routes": 10,
+        "startsPerRoute": 42,
+        "optionLayouts": 6,
+        "startsPerOptionLayout": 70,
+        "routeByOptionLayoutCells": 60,
+        "startsPerRouteByOptionLayoutCell": 7
+      },
+      "targetAttainment": {
+        "targetCompletersPerL1": 300,
+        "exactBinomialProbabilityPerL1": 0.9999898991420048,
+        "exactBinomialShortfallProbabilityPerL1": 0.000010100857995289836,
+        "exactBinomialProbabilityBothIndependentL1Strata": 0.9999797983860369,
+        "exactBinomialShortfallProbabilityAtLeastOneIndependentL1Stratum": 0.00002020161396324743,
+        "monteCarlo": {
+          "successes": 20000,
+          "replicates": 20000,
+          "estimate": 1,
+          "standardError": 0,
+          "wilson95": {
+            "lower": 0.99980796,
+            "upper": 1
+          }
+        }
+      },
+      "completerCount": {
+        "mean": 336.08535,
+        "p05": 322,
+        "p50": 336,
+        "p95": 349
+      },
+      "completerBalanceUnconditional": {
+        "route": {
+          "groups": 10,
+          "minimumCount": {
+            "mean": 29.48285,
+            "p05": 27,
+            "p50": 30,
+            "p95": 32
+          },
+          "maximumCount": {
+            "mean": 37.38195,
+            "p05": 35,
+            "p50": 37,
+            "p95": 40
+          },
+          "maximumMinusMinimum": {
+            "mean": 7.8991,
+            "p05": 5,
+            "p50": 8,
+            "p95": 11
+          }
+        },
+        "optionLayout": {
+          "groups": 6,
+          "minimumCount": {
+            "mean": 51.6783,
+            "p05": 48,
+            "p50": 52,
+            "p95": 55
+          },
+          "maximumCount": {
+            "mean": 60.15265,
+            "p05": 57,
+            "p50": 60,
+            "p95": 63
+          },
+          "maximumMinusMinimum": {
+            "mean": 8.47435,
+            "p05": 4,
+            "p50": 8,
+            "p95": 13
+          }
+        },
+        "routeByOptionLayoutCell": {
+          "groups": 60,
+          "minimumCount": {
+            "mean": 2.86975,
+            "p05": 2,
+            "p50": 3,
+            "p95": 4
+          },
+          "maximumCount": {
+            "mean": 7,
+            "p05": 7,
+            "p50": 7,
+            "p95": 7
+          },
+          "maximumMinusMinimum": {
+            "mean": 4.13025,
+            "p05": 3,
+            "p50": 4,
+            "p95": 5
+          },
+          "emptyCellCount": {
+            "mean": 0.00075,
+            "p05": 0,
+            "p50": 0,
+            "p95": 0
+          },
+          "probabilityAllCellsRepresented": 0.99925,
+          "balancedTargetCompletersPerCell": 5,
+          "exactBinomialProbabilityAllCellsMeetBalancedTarget": 0.00006689551104108341,
+          "monteCarloProbabilityAllCellsMeetBalancedTarget": 0.0001
+        }
+      }
+    }
+  ],
+  "integrity": {
+    "payloadSha256": "aefa79e809eba8c3056f3e2b7f8001fc545a88686daa2446aa74ef0d8c6b2ef5"
+  }
+}

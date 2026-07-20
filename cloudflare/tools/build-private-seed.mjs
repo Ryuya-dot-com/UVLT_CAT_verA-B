@@ -10,11 +10,17 @@ import {
   validateAllocationSchedule,
   validateWilliamsRouteBalance
 } from "./randomization-design.mjs";
+import {
+  runtimeBankProjection,
+  runtimeProjectionSha256,
+  runtimeRoutesProjection
+} from "./runtime-projections.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
 const argumentsMap = new Map();
 let requireActive = false;
+let printProjectionHashes = false;
 for (let index = 2; index < process.argv.length; index += 1) {
   const key = process.argv[index];
   if (key === "--require-active") {
@@ -22,8 +28,13 @@ for (let index = 2; index < process.argv.length; index += 1) {
     requireActive = true;
     continue;
   }
+  if (key === "--print-projection-hashes") {
+    assert(!printProjectionHashes, "--print-projection-hashes may be supplied only once");
+    printProjectionHashes = true;
+    continue;
+  }
   if (!["--config", "--output", "--allocation-schedule"].includes(key)) {
-    throw new Error("Arguments must be --config <path>, --output <path>, --allocation-schedule <path>, and/or --require-active");
+    throw new Error("Arguments must be --config <path>, --output <path>, --allocation-schedule <path>, --require-active, and/or --print-projection-hashes");
   }
   const value = process.argv[index + 1];
   if (value === undefined || value.startsWith("--")) throw new Error(`${key} requires a path`);
@@ -33,9 +44,10 @@ for (let index = 2; index < process.argv.length; index += 1) {
 }
 
 const configPath = path.resolve(project, argumentsMap.get("--config") || "cloudflare/release-config.example.json");
-// Keep an inactive/example preview physically distinct from the frozen active
-// release seed. Both outputs are no-clobber, so reusing the production name for
-// an early preview would intentionally prevent a later, different active seed.
+// Keep an example preview physically distinct from the frozen field seed. Both
+// outputs are no-clobber, so an early preview cannot overwrite a reviewed seed.
+// Every generated seed leaves the release and studies inactive; activation is a
+// separate, post-deployment operation after exact-version and route checks.
 const outputPath = path.resolve(project, argumentsMap.get("--output") || "cloudflare/private/runtime-seed.preview.sql");
 const allocationSchedulePath = path.resolve(
   project,
@@ -144,14 +156,15 @@ const [bankRawBytes, routesRawBytes] = await Promise.all([
 ]);
 
 assertExactKeys(config, [
-  "schemaVersion", "releaseId", "appVersion", "createdAt", "frozenAt", "active",
+  "schemaVersion", "releaseId", "appVersion", "workerVersionId", "createdAt", "frozenAt", "active",
   "randomizationSeedFingerprint", "randomizationAlgorithm", "optionLayoutAlgorithm",
   "participantHmacKeyFingerprint", "prolificCompletionCodeFingerprint",
   "prolificCompletionAction", "expectedHashes", "approvals", "studies"
 ], "Release config");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-3", "Unsupported release config schema");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-5", "Unsupported release config schema");
 assertBoundedString(config.releaseId, "releaseId", { min: 8, max: 128, pattern: /^[a-z0-9][a-z0-9._-]+$/ });
 assertBoundedString(config.appVersion, "appVersion", { min: 8, max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]+$/ });
+assert(config.workerVersionId === null || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(config.workerVersionId), "workerVersionId must be null or a canonical lowercase Cloudflare Worker version UUID");
 assertPlainObject(packageMetadata, "package.json");
 assertBoundedString(packageMetadata.version, "package.json version", { min: 1, max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]*$/ });
 assert(config.appVersion === packageMetadata.version, "Release appVersion must exactly match package.json version");
@@ -182,7 +195,11 @@ assertExactKeys(publicBuildManifest, ["schemaVersion", "appVersion", "files"], "
 assert(publicBuildManifest.schemaVersion === "uvlt-field-public-build-2", "Unsupported public build manifest schema");
 assert(publicBuildManifest.appVersion === packageMetadata.version, "Public build manifest appVersion must exactly match package.json version");
 assert(Array.isArray(publicBuildManifest.files), "Public build manifest files must be an array");
-assertExactKeys(config.expectedHashes, ["runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256", "allocationScheduleSha256", "publicBuildManifestSha256"], "expectedHashes");
+assertExactKeys(config.expectedHashes, [
+  "runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256",
+  "runtimeBankProjectionSha256", "runtimeRoutesProjectionSha256",
+  "allocationScheduleSha256", "publicBuildManifestSha256"
+], "expectedHashes");
 for (const [field, value] of Object.entries(config.expectedHashes)) {
   assert(/^[0-9a-f]{64}$/.test(value || ""), `expectedHashes.${field} must be a lowercase SHA-256 value`);
 }
@@ -250,6 +267,7 @@ for (const [index, study] of studies.entries()) {
 if (config.active) {
   assert(requiredApprovals.every(field => approvals[field] === true), "An active release requires every approval gate to be true");
   assert(config.frozenAt !== null, "An active release requires frozenAt");
+  assert(config.workerVersionId !== null, "An active release requires workerVersionId captured from Cloudflare versions upload");
   assert(allocationSchedule !== null, "An active release requires a private allocation schedule");
   assert(/^sha256:[0-9a-f]{64}$/.test(config.randomizationSeedFingerprint || ""), "An active release requires randomizationSeedFingerprint");
   assert(config.randomizationSeedFingerprint !== `sha256:${ZERO_SHA256}`, "An active release cannot use the zero randomizationSeedFingerprint placeholder");
@@ -372,6 +390,27 @@ assert(new Set(routes.routes.map(route => route.routeId)).size === 10, "Route ID
 
 validateWilliamsRouteBalance(routes);
 
+const runtimeBankProjectionSha256 = runtimeProjectionSha256(
+  runtimeBankProjection(config.releaseId, testlets.values())
+);
+const runtimeRoutesProjectionSha256 = runtimeProjectionSha256(
+  runtimeRoutesProjection(config.releaseId, routeRows)
+);
+if (printProjectionHashes) {
+  console.log(JSON.stringify({
+    ok: true,
+    releaseId: config.releaseId,
+    runtimeBankProjectionSha256,
+    runtimeRoutesProjectionSha256,
+    seedWritten: false
+  }, null, 2));
+  process.exit(0);
+}
+assert(config.expectedHashes.runtimeBankProjectionSha256 === runtimeBankProjectionSha256,
+  "Release config does not pin the canonical D1 runtime-bank projection");
+assert(config.expectedHashes.runtimeRoutesProjectionSha256 === runtimeRoutesProjectionSha256,
+  "Release config does not pin the canonical D1 runtime-routes projection");
+
 const allocationRows = [];
 if (allocationSchedule === null) {
   assert(config.active === false, "An active release cannot omit its allocation schedule");
@@ -410,13 +449,15 @@ const lines = [
   "PRAGMA foreign_keys = ON;",
   "",
   "INSERT INTO runtime_releases (",
-  "  release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,",
+  "  release_id, app_version, worker_version_id, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,",
+  "  runtime_bank_projection_sha256, runtime_routes_projection_sha256,",
   "  allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm, participant_hmac_key_fingerprint,",
   "  prolific_completion_code_fingerprint, prolific_completion_action,",
   "  expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at",
   ") VALUES (",
-  `  ${sql(config.releaseId)}, ${sql(config.appVersion)}, ${sql(config.expectedHashes.publicBuildManifestSha256)}, ${sql(manifest.integrity.payloadSha256)},`,
-  `  ${sql(bank.integrity.payloadSha256)}, ${sql(routes.integrity.payloadSha256)}, ${sql(allocationSchedule?.integrity.payloadSha256)},`,
+  `  ${sql(config.releaseId)}, ${sql(config.appVersion)}, ${sql(config.workerVersionId)}, ${sql(config.expectedHashes.publicBuildManifestSha256)}, ${sql(manifest.integrity.payloadSha256)},`,
+  `  ${sql(bank.integrity.payloadSha256)}, ${sql(routes.integrity.payloadSha256)},`,
+  `  ${sql(runtimeBankProjectionSha256)}, ${sql(runtimeRoutesProjectionSha256)}, ${sql(allocationSchedule?.integrity.payloadSha256)},`,
   `  ${sql(config.randomizationSeedFingerprint)}, ${sql(config.randomizationAlgorithm)}, ${sql(config.optionLayoutAlgorithm)}, ${sql(config.participantHmacKeyFingerprint)},`,
   `  ${sql(config.prolificCompletionCodeFingerprint)}, ${sql(config.prolificCompletionAction)},`,
   `  100, 300, 9, 0, ${sql(config.createdAt)}, ${sql(config.frozenAt)}`,
@@ -453,18 +494,6 @@ for (const row of allocationRows) {
   lines.push(
     "INSERT INTO runtime_allocation_slots (release_id, l1, allocation_index, randomization_block, block_position, route_id, option_layout_id) VALUES (" +
       `${sql(config.releaseId)}, ${sql(row.l1)}, ${row.allocationIndex}, ${row.randomizationBlock}, ${row.blockPosition}, ${sql(row.routeId)}, ${row.optionLayoutId});`
-  );
-}
-
-if (config.active) {
-  lines.push("");
-  for (const study of studies) {
-    lines.push(
-      `UPDATE studies SET active = 1 WHERE study_id = ${sql(study.studyId)} AND release_id = ${sql(config.releaseId)} AND active = 0;`
-    );
-  }
-  lines.push(
-    `UPDATE runtime_releases SET active = 1 WHERE release_id = ${sql(config.releaseId)} AND active = 0;`
   );
 }
 
@@ -508,8 +537,12 @@ console.log(JSON.stringify({
   seedWrite,
   releaseId: config.releaseId,
   appVersion: config.appVersion,
+  workerVersionId: config.workerVersionId,
   publicBuildManifestSha256: config.expectedHashes.publicBuildManifestSha256,
-  active: config.active,
+  runtimeBankProjectionSha256,
+  runtimeRoutesProjectionSha256,
+  releaseConfigActive: config.active,
+  seedActivatesRelease: false,
   participantHmacKeyFingerprintConfigured: config.participantHmacKeyFingerprint !== null,
   prolificCompletionCodeFingerprintConfigured: config.prolificCompletionCodeFingerprint !== null,
   prolificCompletionAction: config.prolificCompletionAction,

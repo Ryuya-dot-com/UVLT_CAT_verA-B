@@ -130,8 +130,8 @@ const [config, routes] = await Promise.all([
   readJson(routesPath, "Route artifact")
 ]);
 assert(isPlainObject(config), "Release config must be a plain object");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-3",
-  "Randomization schedule generation requires release config schema v3");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-5",
+  "Randomization schedule generation requires release config schema v5");
 assert(typeof config.releaseId === "string", "Release config must contain releaseId");
 assert(isPlainObject(config.expectedHashes), "Release config must contain expectedHashes");
 assert(typeof config.expectedHashes.routesPayloadSha256 === "string" &&

@@ -12,6 +12,9 @@ const RANDOMIZATION_BLOCKS_PER_L1 = ALLOCATIONS_PER_L1 / RANDOMIZATION_BLOCK_SIZ
 const OPTION_LAYOUT_COUNT = 6;
 const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
 const OPTION_LAYOUT_ALGORITHM = "even-order-williams-square-6-canonical-first-v1";
+const RUNTIME_BANK_PROJECTION_SCHEMA = "uvlt-d1-runtime-bank-projection-1";
+const RUNTIME_ROUTES_PROJECTION_SCHEMA = "uvlt-d1-runtime-routes-projection-1";
+const RELEASE_BINDING_SCHEMA = "uvlt-release-binding-1";
 const PROLIFIC_ID_PATTERN = /^[0-9a-f]{24}$/i;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -21,6 +24,7 @@ const COMPLETION_CODE_PATTERN = /^[A-Za-z0-9]{4,32}$/;
 const APP_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const SHA256_FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const WORKER_VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const ZERO_SHA256 = "0".repeat(64);
 const ZERO_SHA256_FINGERPRINT = `sha256:${ZERO_SHA256}`;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
@@ -99,6 +103,11 @@ interface RuntimeTestletContentRow {
   content_sha256: string;
 }
 
+interface RuntimeProjectionTestletRow extends RuntimeTestletContentRow {
+  form_id: "A" | "B";
+  band: "1k" | "2k" | "3k" | "4k" | "5k";
+}
+
 interface RuntimeTestletRow extends RuntimeTestletContentRow {
   testlet_ordinal: number;
   module_position: number;
@@ -157,10 +166,13 @@ interface CompletionCountsRow {
 
 interface ReleaseReadinessRow {
   app_version: string;
+  worker_version_id: string | null;
   public_build_manifest_sha256: string;
   runtime_manifest_sha256: string;
   bank_sha256: string;
   routes_sha256: string;
+  runtime_bank_projection_sha256: string;
+  runtime_routes_projection_sha256: string;
   allocation_schedule_sha256: string;
   randomization_seed_fingerprint: string | null;
   randomization_algorithm: string | null;
@@ -173,6 +185,8 @@ interface ReleaseReadinessRow {
   expected_testlets: number;
   expected_items: number;
   expected_breaks: number;
+  total_study_count: number;
+  total_l1_count: number;
   active_study_count: number;
   active_l1_count: number;
 }
@@ -184,6 +198,8 @@ interface ExpectedReleaseIdentity {
   runtimeManifestSha256: string;
   bankSha256: string;
   routesSha256: string;
+  runtimeBankProjectionSha256: string;
+  runtimeRoutesProjectionSha256: string;
   allocationScheduleSha256: string;
   participantHmacKeyFingerprint: string;
   prolificCompletionCodeFingerprint: string;
@@ -511,6 +527,8 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
   const runtimeManifestSha256: string = env.EXPECTED_RUNTIME_MANIFEST_SHA256;
   const bankSha256: string = env.EXPECTED_BANK_SHA256;
   const routesSha256: string = env.EXPECTED_ROUTES_SHA256;
+  const runtimeBankProjectionSha256: string = env.EXPECTED_RUNTIME_BANK_PROJECTION_SHA256;
+  const runtimeRoutesProjectionSha256: string = env.EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256;
   const allocationScheduleSha256: string = env.EXPECTED_ALLOCATION_SCHEDULE_SHA256;
   const participantHmacKeyFingerprint: string = env.EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT;
   const prolificCompletionCodeFingerprint: string = env.EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT;
@@ -519,8 +537,12 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
       !APP_VERSION_PATTERN.test(appVersion) || appVersion === "UNCONFIGURED" ||
       !SHA256_PATTERN.test(publicBuildManifestSha256) ||
       !SHA256_PATTERN.test(runtimeManifestSha256) || !SHA256_PATTERN.test(bankSha256) ||
-      !SHA256_PATTERN.test(routesSha256) || !SHA256_PATTERN.test(allocationScheduleSha256) ||
+      !SHA256_PATTERN.test(routesSha256) ||
+      !SHA256_PATTERN.test(runtimeBankProjectionSha256) ||
+      !SHA256_PATTERN.test(runtimeRoutesProjectionSha256) ||
+      !SHA256_PATTERN.test(allocationScheduleSha256) ||
       [publicBuildManifestSha256, runtimeManifestSha256, bankSha256, routesSha256,
+        runtimeBankProjectionSha256, runtimeRoutesProjectionSha256,
         allocationScheduleSha256].some((value) => value === ZERO_SHA256) ||
       !SHA256_FINGERPRINT_PATTERN.test(participantHmacKeyFingerprint) ||
       participantHmacKeyFingerprint === ZERO_SHA256_FINGERPRINT) {
@@ -538,6 +560,8 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
     runtimeManifestSha256,
     bankSha256,
     routesSha256,
+    runtimeBankProjectionSha256,
+    runtimeRoutesProjectionSha256,
     allocationScheduleSha256,
     participantHmacKeyFingerprint,
     prolificCompletionCodeFingerprint,
@@ -604,10 +628,13 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
   return env.DB.prepare(`
     SELECT
       r.app_version,
+      r.worker_version_id,
       r.public_build_manifest_sha256,
       r.runtime_manifest_sha256,
       r.bank_sha256,
       r.routes_sha256,
+      r.runtime_bank_projection_sha256,
+      r.runtime_routes_projection_sha256,
       r.allocation_schedule_sha256,
       r.randomization_seed_fingerprint,
       r.randomization_algorithm,
@@ -620,6 +647,8 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
       r.expected_testlets,
       r.expected_items,
       r.expected_breaks,
+      (SELECT COUNT(*) FROM studies s WHERE s.release_id = r.release_id) AS total_study_count,
+      (SELECT COUNT(DISTINCT l1) FROM studies s WHERE s.release_id = r.release_id) AS total_l1_count,
       (SELECT COUNT(*) FROM studies s WHERE s.release_id = r.release_id AND s.active = 1) AS active_study_count,
       (SELECT COUNT(DISTINCT l1) FROM studies s WHERE s.release_id = r.release_id AND s.active = 1) AS active_l1_count
     FROM runtime_releases r
@@ -627,20 +656,25 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
   `).bind(env.EXPECTED_RELEASE_ID).first<ReleaseReadinessRow>();
 }
 
-function readinessIsComplete(
+function releaseIdentityMatches(
   row: ReleaseReadinessRow | null,
   expectedIdentity: ExpectedReleaseIdentity,
   actualHmacKeyFingerprint: string,
   actualCompletionCodeFingerprint: string,
   publicBuild: PublicBuildIdentity | null,
+  workerVersionId: string | null,
   workerVersionTag: string | null
 ): boolean {
-  return row !== null && row.active === 1 && row.frozen_at !== null &&
+  return row !== null && row.frozen_at !== null &&
     row.app_version === expectedIdentity.appVersion &&
+    WORKER_VERSION_ID_PATTERN.test(row.worker_version_id ?? "") &&
+    workerVersionId === row.worker_version_id &&
     row.public_build_manifest_sha256 === expectedIdentity.publicBuildManifestSha256 &&
     row.runtime_manifest_sha256 === expectedIdentity.runtimeManifestSha256 &&
     row.bank_sha256 === expectedIdentity.bankSha256 &&
     row.routes_sha256 === expectedIdentity.routesSha256 &&
+    row.runtime_bank_projection_sha256 === expectedIdentity.runtimeBankProjectionSha256 &&
+    row.runtime_routes_projection_sha256 === expectedIdentity.runtimeRoutesProjectionSha256 &&
     row.allocation_schedule_sha256 === expectedIdentity.allocationScheduleSha256 &&
     SHA256_FINGERPRINT_PATTERN.test(row.randomization_seed_fingerprint ?? "") &&
     row.randomization_seed_fingerprint !== ZERO_SHA256_FINGERPRINT &&
@@ -655,6 +689,27 @@ function readinessIsComplete(
     publicBuild.rawSha256 === expectedIdentity.publicBuildManifestSha256 &&
     workerVersionTag === expectedIdentity.releaseId &&
     row.expected_testlets === TOTAL_TESTLETS && row.expected_items === TOTAL_RESPONSES && row.expected_breaks === TOTAL_BREAKS &&
+    row.total_study_count === L1_COUNT && row.total_l1_count === L1_COUNT;
+}
+
+function readinessIsComplete(
+  row: ReleaseReadinessRow | null,
+  expectedIdentity: ExpectedReleaseIdentity,
+  actualHmacKeyFingerprint: string,
+  actualCompletionCodeFingerprint: string,
+  publicBuild: PublicBuildIdentity | null,
+  workerVersionId: string | null,
+  workerVersionTag: string | null
+): boolean {
+  return releaseIdentityMatches(
+    row,
+    expectedIdentity,
+    actualHmacKeyFingerprint,
+    actualCompletionCodeFingerprint,
+    publicBuild,
+    workerVersionId,
+    workerVersionTag
+  ) && row !== null && row.active === 1 &&
     row.active_study_count === L1_COUNT && row.active_l1_count === L1_COUNT;
 }
 
@@ -666,14 +721,18 @@ function exactCountMap(counts: Map<string, number>, cells: number, repetitions: 
   return counts.size === cells && [...counts.values()].every((count) => count === repetitions);
 }
 
-async function runtimeContentAndRoutesMatch(env: Env, releaseId: string): Promise<boolean> {
+async function runtimeContentAndRoutesMatch(
+  env: Env,
+  expectedIdentity: ExpectedReleaseIdentity
+): Promise<boolean> {
+  const releaseId = expectedIdentity.releaseId;
   const [testletResult, routeResult] = await Promise.all([
     env.DB.prepare(`
-      SELECT testlet_id, module_id, options_json, items_json, content_sha256
+      SELECT testlet_id, module_id, form_id, band, options_json, items_json, content_sha256
       FROM runtime_testlets
       WHERE release_id = ?
       ORDER BY testlet_id
-    `).bind(releaseId).all<RuntimeTestletContentRow>(),
+    `).bind(releaseId).all<RuntimeProjectionTestletRow>(),
     env.DB.prepare(`
       SELECT route_id, testlet_ordinal, module_position, testlet_position_within_module, testlet_id
       FROM runtime_route_testlets
@@ -752,7 +811,7 @@ async function runtimeContentAndRoutesMatch(env: Env, releaseId: string): Promis
     }
   }
 
-  return exactCountMap(modulePositions, ROUTE_COUNT * ROUTE_COUNT, 1) &&
+  const structureMatches = exactCountMap(modulePositions, ROUTE_COUNT * ROUTE_COUNT, 1) &&
     exactCountMap(moduleCarryovers, ROUTE_COUNT * (ROUTE_COUNT - 1), 1) &&
     exactCountMap(withinModulePositions, TOTAL_TESTLETS * (TOTAL_TESTLETS / ROUTE_COUNT), 1) &&
     exactCountMap(
@@ -760,6 +819,42 @@ async function runtimeContentAndRoutesMatch(env: Env, releaseId: string): Promis
       ROUTE_COUNT * (TOTAL_TESTLETS / ROUTE_COUNT) * (TOTAL_TESTLETS / ROUTE_COUNT - 1),
       1
     );
+  if (!structureMatches) return false;
+
+  const runtimeBankProjection = {
+    schemaVersion: RUNTIME_BANK_PROJECTION_SCHEMA,
+    releaseId,
+    testlets: testlets.map((testlet, index) => ({
+      testletId: testlet.testletId,
+      moduleId: testlet.moduleId,
+      formId: testletResult.results[index].form_id,
+      band: testletResult.results[index].band,
+      options: [...testlet.options],
+      items: testlet.items.map((item) => ({
+        itemId: item.itemId,
+        prompt: item.prompt,
+        itemPositionWithinTestlet: item.itemPositionWithinTestlet
+      })),
+      contentSha256: testletResult.results[index].content_sha256
+    }))
+  };
+  const runtimeRoutesProjection = {
+    schemaVersion: RUNTIME_ROUTES_PROJECTION_SCHEMA,
+    releaseId,
+    rows: routeResult.results.map((row) => ({
+      routeId: row.route_id,
+      testletOrdinal: row.testlet_ordinal,
+      modulePosition: row.module_position,
+      testletPositionWithinModule: row.testlet_position_within_module,
+      testletId: row.testlet_id
+    }))
+  };
+  const [bankProjectionHash, routesProjectionHash] = await Promise.all([
+    sha256Hex(stableJson(runtimeBankProjection)),
+    sha256Hex(stableJson(runtimeRoutesProjection))
+  ]);
+  return bankProjectionHash === expectedIdentity.runtimeBankProjectionSha256 &&
+    routesProjectionHash === expectedIdentity.runtimeRoutesProjectionSha256;
 }
 
 async function allocationScheduleRowsMatch(
@@ -869,6 +964,8 @@ function runtimeVerificationKey(
     runtimeManifestSha256: expectedIdentity.runtimeManifestSha256,
     bankSha256: expectedIdentity.bankSha256,
     routesSha256: expectedIdentity.routesSha256,
+    runtimeBankProjectionSha256: expectedIdentity.runtimeBankProjectionSha256,
+    runtimeRoutesProjectionSha256: expectedIdentity.runtimeRoutesProjectionSha256,
     allocationScheduleSha256: expectedIdentity.allocationScheduleSha256,
     randomizationSeedFingerprint: row.randomization_seed_fingerprint,
     participantHmacKeyFingerprint: expectedIdentity.participantHmacKeyFingerprint,
@@ -893,13 +990,13 @@ async function immutableRuntimeMatches(
   expectedIdentity: ExpectedReleaseIdentity
 ): Promise<boolean> {
   const cacheKey = runtimeVerificationKey(env, row, expectedIdentity);
-  if (verifiedRuntimeKeys.has(cacheKey)) return true;
+  if (row.active === 1 && verifiedRuntimeKeys.has(cacheKey)) return true;
   const [contentAndRoutesMatch, allocationMatches] = await Promise.all([
-    runtimeContentAndRoutesMatch(env, expectedIdentity.releaseId),
+    runtimeContentAndRoutesMatch(env, expectedIdentity),
     allocationScheduleRowsMatch(env, row, expectedIdentity)
   ]);
   if (!contentAndRoutesMatch || !allocationMatches) return false;
-  rememberVerifiedRuntime(cacheKey);
+  if (row.active === 1) rememberVerifiedRuntime(cacheKey);
   return true;
 }
 
@@ -921,6 +1018,7 @@ async function assertReleaseReady(env: Env): Promise<void> {
     `sha256:${actualHmacKeyHash}`,
     `sha256:${actualCompletionCodeHash}`,
     publicBuild,
+    env.CF_VERSION_METADATA?.id ?? null,
     env.CF_VERSION_METADATA?.tag ?? null
   ) || row === null || !(await immutableRuntimeMatches(env, row, expectedIdentity))) {
     httpError(503, "RELEASE_NOT_READY", "Data collection is not available.", true);
@@ -1442,6 +1540,9 @@ async function existingTestletSubmission(
 
 async function handleConfig(env: Env): Promise<Response> {
   let collectionEnabled = false;
+  let releaseIntegrityVerified = false;
+  let activationPreflightReady = false;
+  let releaseBindingSha256: string | null = null;
   if (environmentShapeReady(env)) {
     prolificApiOrigin(env);
     const expectedIdentity = expectedReleaseIdentity(env);
@@ -1452,22 +1553,45 @@ async function handleConfig(env: Env): Promise<Response> {
         sha256Hex(env.PROLIFIC_COMPLETION_CODE),
         publicBuildIdentity(env)
       ]);
-      collectionEnabled = readinessIsComplete(
+      const actualHmacKeyFingerprint = `sha256:${actualHmacKeyHash}`;
+      const actualCompletionCodeFingerprint = `sha256:${actualCompletionCodeHash}`;
+      const identityMatches = releaseIdentityMatches(
         row,
         expectedIdentity,
-        `sha256:${actualHmacKeyHash}`,
-        `sha256:${actualCompletionCodeHash}`,
+        actualHmacKeyFingerprint,
+        actualCompletionCodeFingerprint,
         publicBuild,
+        env.CF_VERSION_METADATA?.id ?? null,
         env.CF_VERSION_METADATA?.tag ?? null
       );
-      if (collectionEnabled && row !== null) {
-        collectionEnabled = await immutableRuntimeMatches(env, row, expectedIdentity);
+      if (identityMatches && row !== null) {
+        releaseBindingSha256 = await sha256Hex(stableJson({
+          schemaVersion: RELEASE_BINDING_SCHEMA,
+          releaseId: expectedIdentity.releaseId,
+          appVersion: expectedIdentity.appVersion,
+          workerVersionId: row.worker_version_id
+        }));
+        releaseIntegrityVerified = await immutableRuntimeMatches(env, row, expectedIdentity);
+        activationPreflightReady = releaseIntegrityVerified && row.active === 0 &&
+          row.active_study_count === 0 && row.active_l1_count === 0;
       }
+      collectionEnabled = releaseIntegrityVerified && readinessIsComplete(
+        row,
+        expectedIdentity,
+        actualHmacKeyFingerprint,
+        actualCompletionCodeFingerprint,
+        publicBuild,
+        env.CF_VERSION_METADATA?.id ?? null,
+        env.CF_VERSION_METADATA?.tag ?? null
+      );
     }
   }
   return jsonResponse({
     ok: true,
     collection_enabled: collectionEnabled,
+    release_integrity_verified: releaseIntegrityVerified,
+    activation_preflight_ready: activationPreflightReady,
+    release_binding_sha256: releaseBindingSha256,
     protocol_version: "uvlt-fixed-ab-worker-v1",
     total_testlets: TOTAL_TESTLETS,
     total_item_responses: TOTAL_RESPONSES,

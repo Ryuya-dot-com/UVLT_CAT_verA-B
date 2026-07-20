@@ -6,6 +6,19 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE runtime_releases (
   release_id TEXT PRIMARY KEY,
   app_version TEXT NOT NULL,
+  worker_version_id TEXT
+    CHECK (worker_version_id IS NULL OR (
+      length(worker_version_id) = 36 AND
+      worker_version_id = lower(worker_version_id) AND
+      substr(worker_version_id, 9, 1) = '-' AND
+      substr(worker_version_id, 14, 1) = '-' AND
+      substr(worker_version_id, 19, 1) = '-' AND
+      substr(worker_version_id, 24, 1) = '-' AND
+      substr(worker_version_id, 15, 1) IN ('1', '2', '3', '4', '5') AND
+      substr(worker_version_id, 20, 1) IN ('8', '9', 'a', 'b') AND
+      length(replace(worker_version_id, '-', '')) = 32 AND
+      replace(worker_version_id, '-', '') NOT GLOB '*[^0-9a-f]*'
+    )),
   public_build_manifest_sha256 TEXT NOT NULL
     CHECK (length(public_build_manifest_sha256) = 64 AND public_build_manifest_sha256 NOT GLOB '*[^0-9a-f]*'),
   runtime_manifest_sha256 TEXT NOT NULL
@@ -14,6 +27,10 @@ CREATE TABLE runtime_releases (
     CHECK (length(bank_sha256) = 64 AND bank_sha256 NOT GLOB '*[^0-9a-f]*'),
   routes_sha256 TEXT NOT NULL
     CHECK (length(routes_sha256) = 64 AND routes_sha256 NOT GLOB '*[^0-9a-f]*'),
+  runtime_bank_projection_sha256 TEXT NOT NULL
+    CHECK (length(runtime_bank_projection_sha256) = 64 AND runtime_bank_projection_sha256 NOT GLOB '*[^0-9a-f]*'),
+  runtime_routes_projection_sha256 TEXT NOT NULL
+    CHECK (length(runtime_routes_projection_sha256) = 64 AND runtime_routes_projection_sha256 NOT GLOB '*[^0-9a-f]*'),
   allocation_schedule_sha256 TEXT
     CHECK (allocation_schedule_sha256 IS NULL OR (
       length(allocation_schedule_sha256) = 64 AND allocation_schedule_sha256 NOT GLOB '*[^0-9a-f]*'
@@ -49,10 +66,13 @@ CREATE TABLE runtime_releases (
   created_at TEXT NOT NULL,
   frozen_at TEXT,
   CHECK (active = 0 OR (
+    worker_version_id IS NOT NULL AND
     public_build_manifest_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
     runtime_manifest_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
     bank_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
     routes_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    runtime_bank_projection_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    runtime_routes_projection_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
     allocation_schedule_sha256 IS NOT NULL AND
     allocation_schedule_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
     randomization_seed_fingerprint IS NOT NULL AND
@@ -274,10 +294,13 @@ BEGIN
   SELECT CASE WHEN
     NEW.release_id IS NOT OLD.release_id OR
     NEW.app_version IS NOT OLD.app_version OR
+    NEW.worker_version_id IS NOT OLD.worker_version_id OR
     NEW.public_build_manifest_sha256 IS NOT OLD.public_build_manifest_sha256 OR
     NEW.runtime_manifest_sha256 IS NOT OLD.runtime_manifest_sha256 OR
     NEW.bank_sha256 IS NOT OLD.bank_sha256 OR
     NEW.routes_sha256 IS NOT OLD.routes_sha256 OR
+    NEW.runtime_bank_projection_sha256 IS NOT OLD.runtime_bank_projection_sha256 OR
+    NEW.runtime_routes_projection_sha256 IS NOT OLD.runtime_routes_projection_sha256 OR
     NEW.allocation_schedule_sha256 IS NOT OLD.allocation_schedule_sha256 OR
     NEW.randomization_seed_fingerprint IS NOT OLD.randomization_seed_fingerprint OR
     NEW.randomization_algorithm IS NOT OLD.randomization_algorithm OR
@@ -293,6 +316,7 @@ BEGIN
   THEN RAISE(ABORT, 'runtime release activation may only change active') END;
 
   SELECT CASE WHEN NEW.frozen_at IS NULL OR
+    NEW.worker_version_id IS NULL OR
     NEW.allocation_schedule_sha256 IS NULL OR
     NEW.randomization_seed_fingerprint IS NULL OR
     NEW.randomization_algorithm IS NULL OR

@@ -71,13 +71,18 @@ const [release, wrangler, packageMetadata] = await Promise.all([
   readJson(path.join(project, "package.json"), "package.json")
 ]);
 
-assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-3", "Private release config schema is unsupported");
+assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-5", "Private release config schema is unsupported");
 assert(release.active === true, "Private release config must be active before field deployment");
 assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
 assert(typeof release.appVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(release.appVersion), "Private release appVersion is invalid");
+assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(release.workerVersionId || ""), "Private active release workerVersionId must be a canonical lowercase Cloudflare Worker version UUID");
 assert(release.appVersion === packageMetadata?.version, "Private release appVersion must exactly match package.json version");
 assert(release.expectedHashes && typeof release.expectedHashes === "object" && !Array.isArray(release.expectedHashes), "Private release expectedHashes must be an object");
-for (const field of ["runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256", "allocationScheduleSha256", "publicBuildManifestSha256"]) {
+for (const field of [
+  "runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256",
+  "runtimeBankProjectionSha256", "runtimeRoutesProjectionSha256",
+  "allocationScheduleSha256", "publicBuildManifestSha256"
+]) {
   assert(/^[0-9a-f]{64}$/.test(release.expectedHashes[field] || ""), `Private release expectedHashes.${field} is invalid`);
   assert(release.expectedHashes[field] !== "0".repeat(64), `Private active release expectedHashes.${field} is still the zero placeholder`);
 }
@@ -141,13 +146,15 @@ const expectedVariableNames = [
   "EXPECTED_RUNTIME_MANIFEST_SHA256",
   "EXPECTED_BANK_SHA256",
   "EXPECTED_ROUTES_SHA256",
+  "EXPECTED_RUNTIME_BANK_PROJECTION_SHA256",
+  "EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256",
   "EXPECTED_ALLOCATION_SCHEDULE_SHA256",
   "EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT",
   "EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT",
   "EXPECTED_PROLIFIC_COMPLETION_ACTION",
   "PROLIFIC_API_BASE_URL"
 ];
-assert(JSON.stringify(Object.keys(wrangler.vars).sort()) === JSON.stringify(expectedVariableNames.sort()), "Production vars must contain exactly the twelve non-secret runtime variables");
+assert(JSON.stringify(Object.keys(wrangler.vars).sort()) === JSON.stringify(expectedVariableNames.sort()), "Production vars must contain exactly the fourteen non-secret runtime variables");
 assert(wrangler.vars.COLLECTION_MODE === "field", "Production COLLECTION_MODE must be field");
 assert(wrangler.vars?.EXPECTED_RELEASE_ID === release.releaseId, "Production EXPECTED_RELEASE_ID must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_APP_VERSION === release.appVersion, "Production EXPECTED_APP_VERSION must exactly match package.json and the active private release");
@@ -155,6 +162,8 @@ assert(wrangler.vars?.EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256 === release.expected
 assert(wrangler.vars?.EXPECTED_RUNTIME_MANIFEST_SHA256 === release.expectedHashes.runtimeManifestPayloadSha256, "Production EXPECTED_RUNTIME_MANIFEST_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_BANK_SHA256 === release.expectedHashes.bankPayloadSha256, "Production EXPECTED_BANK_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_ROUTES_SHA256 === release.expectedHashes.routesPayloadSha256, "Production EXPECTED_ROUTES_SHA256 must exactly match the active private release");
+assert(wrangler.vars?.EXPECTED_RUNTIME_BANK_PROJECTION_SHA256 === release.expectedHashes.runtimeBankProjectionSha256, "Production EXPECTED_RUNTIME_BANK_PROJECTION_SHA256 must exactly match the active private release");
+assert(wrangler.vars?.EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256 === release.expectedHashes.runtimeRoutesProjectionSha256, "Production EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_ALLOCATION_SCHEDULE_SHA256 === release.expectedHashes.allocationScheduleSha256, "Production EXPECTED_ALLOCATION_SCHEDULE_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT === release.participantHmacKeyFingerprint, "Production EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT === release.prolificCompletionCodeFingerprint, "Production EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT must exactly match the active private release");
@@ -181,6 +190,7 @@ console.log(JSON.stringify({
   ok: true,
   releaseId: release.releaseId,
   appVersion: release.appVersion,
+  workerVersionId: release.workerVersionId,
   expectedWorkerVersionTag: release.releaseId,
   collectionMode: "field",
   customDomainConfigured: true,

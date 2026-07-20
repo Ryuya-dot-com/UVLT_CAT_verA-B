@@ -24,6 +24,8 @@ const PUBLIC_BUILD_MANIFEST_SHA256 = "96a3bc87f488edb7bb822ab0ce235bf1eea61f8cac
 const RUNTIME_MANIFEST_SHA256 = "1".repeat(64);
 const BANK_SHA256 = "2".repeat(64);
 const ROUTES_SHA256 = "3".repeat(64);
+let RUNTIME_BANK_PROJECTION_SHA256 = "0".repeat(64);
+let RUNTIME_ROUTES_PROJECTION_SHA256 = "0".repeat(64);
 const ALLOCATION_SCHEDULE_SHA256 = "de02d7a732893d96108579fb8b80569b4b22bfc932c0a910512fd549de964063";
 const RANDOMIZATION_SEED_FINGERPRINT = `sha256:${"4".repeat(64)}`;
 const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
@@ -33,6 +35,10 @@ const COMPLETION_CODE_FINGERPRINT = "sha256:e02731629394086455f97e58d6c865f78f10
 const HEX_64 = /^[0-9a-f]{64}$/;
 const ISO_UTC_PATTERN_FOR_TEST = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 let schemaGeneration = 0;
+
+function currentWorkerVersionId(): string {
+  return `11111111-1111-4111-8111-${String(schemaGeneration).padStart(12, "0")}`;
+}
 
 type TestBindings = Env & { TEST_MIGRATIONS: D1Migration[] };
 
@@ -77,6 +83,8 @@ const fieldEnvironment = (overrides: Record<string, unknown> = {}) => environmen
   EXPECTED_RUNTIME_MANIFEST_SHA256: RUNTIME_MANIFEST_SHA256,
   EXPECTED_BANK_SHA256: BANK_SHA256,
   EXPECTED_ROUTES_SHA256: ROUTES_SHA256,
+  EXPECTED_RUNTIME_BANK_PROJECTION_SHA256: RUNTIME_BANK_PROJECTION_SHA256,
+  EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256: RUNTIME_ROUTES_PROJECTION_SHA256,
   EXPECTED_ALLOCATION_SCHEDULE_SHA256: ALLOCATION_SCHEDULE_SHA256,
   EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT: PARTICIPANT_HMAC_KEY_FINGERPRINT,
   EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT: COMPLETION_CODE_FINGERPRINT,
@@ -86,7 +94,7 @@ const fieldEnvironment = (overrides: Record<string, unknown> = {}) => environmen
   PROLIFIC_API_TOKEN: "test-only-prolific-token",
   PROLIFIC_COMPLETION_CODE: COMPLETION_CODE,
   CF_VERSION_METADATA: {
-    id: `11111111-1111-4111-8111-${String(schemaGeneration).padStart(12, "0")}`,
+    id: currentWorkerVersionId(),
     tag: RELEASE_ID,
     timestamp: "2026-07-20T00:00:00.000Z"
   },
@@ -174,6 +182,64 @@ function evenOrderWilliamsSquareForTest(order: number): number[][] {
     first.map((condition) => canonicalLabelByRawTreatment.get((condition + row) % order)!));
 }
 
+async function syntheticRuntimeProjectionHashes(): Promise<{
+  bank: string;
+  routes: string;
+}> {
+  const testlets = [];
+  for (let ordinal = 0; ordinal < 100; ordinal += 1) {
+    const testlet = syntheticTestlet(ordinal);
+    const contentSha256 = await sha256Hex(stableJsonForTest({
+      testletId: testlet.testletId,
+      moduleId: testlet.moduleId,
+      options: testlet.options,
+      items: testlet.items
+    }));
+    testlets.push({
+      testletId: testlet.testletId,
+      moduleId: testlet.moduleId,
+      formId: ordinal % 2 === 0 ? "A" : "B",
+      band: ["1k", "2k", "3k", "4k", "5k"][ordinal % 5],
+      options: testlet.options,
+      items: testlet.items,
+      contentSha256
+    });
+  }
+  const rows = [];
+  const routeOrders = evenOrderWilliamsSquareForTest(10);
+  for (let routeIndex = 0; routeIndex < 10; routeIndex += 1) {
+    const routeId = `R${String(routeIndex + 1).padStart(2, "0")}`;
+    const moduleOrder = routeOrders[routeIndex];
+    const withinModuleOrder = routeOrders[routeIndex];
+    for (let modulePosition = 0; modulePosition < 10; modulePosition += 1) {
+      for (let withinModulePosition = 0; withinModulePosition < 10; withinModulePosition += 1) {
+        const testletOrdinal = modulePosition * 10 + withinModulePosition;
+        const canonicalTestletOrdinal = moduleOrder[modulePosition] * 10 +
+          withinModuleOrder[withinModulePosition];
+        rows.push({
+          routeId,
+          testletOrdinal,
+          modulePosition: modulePosition + 1,
+          testletPositionWithinModule: withinModulePosition + 1,
+          testletId: syntheticTestlet(canonicalTestletOrdinal).testletId
+        });
+      }
+    }
+  }
+  return {
+    bank: await sha256Hex(stableJsonForTest({
+      schemaVersion: "uvlt-d1-runtime-bank-projection-1",
+      releaseId: RELEASE_ID,
+      testlets
+    })),
+    routes: await sha256Hex(stableJsonForTest({
+      schemaVersion: "uvlt-d1-runtime-routes-projection-1",
+      releaseId: RELEASE_ID,
+      rows
+    }))
+  };
+}
+
 async function applySchema(): Promise<void> {
   await bindings.DB.batch([
     bindings.DB.prepare("DROP TABLE IF EXISTS responses"),
@@ -194,38 +260,53 @@ async function applySchema(): Promise<void> {
 async function seedReadySyntheticRelease(
   {
     corruptTestletOrdinal,
+    coordinatedTestletMutation = false,
     swapFirstJaAssignments = false,
     unbalancedRouteOrder = false,
+    balancedRouteRelabel = false,
     appVersion = APP_VERSION,
+    workerVersionId = currentWorkerVersionId(),
     publicBuildManifestSha256 = PUBLIC_BUILD_MANIFEST_SHA256,
     participantHmacKeyFingerprint = PARTICIPANT_HMAC_KEY_FINGERPRINT,
-    completionCodeFingerprint = COMPLETION_CODE_FINGERPRINT
+    completionCodeFingerprint = COMPLETION_CODE_FINGERPRINT,
+    activate = true
   }: {
     corruptTestletOrdinal?: number;
+    coordinatedTestletMutation?: boolean;
     swapFirstJaAssignments?: boolean;
     unbalancedRouteOrder?: boolean;
+    balancedRouteRelabel?: boolean;
     appVersion?: string;
+    workerVersionId?: string | null;
     publicBuildManifestSha256?: string;
     participantHmacKeyFingerprint?: string;
     completionCodeFingerprint?: string;
+    activate?: boolean;
   } = {}
 ): Promise<void> {
   const now = "2026-07-20T00:00:00.000Z";
+  const projectionHashes = await syntheticRuntimeProjectionHashes();
+  RUNTIME_BANK_PROJECTION_SHA256 = projectionHashes.bank;
+  RUNTIME_ROUTES_PROJECTION_SHA256 = projectionHashes.routes;
   await bindings.DB.batch([
     bindings.DB.prepare(`
       INSERT INTO runtime_releases (
-        release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
+        release_id, app_version, worker_version_id, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
+        runtime_bank_projection_sha256, runtime_routes_projection_sha256,
         allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
     `).bind(
       RELEASE_ID,
       appVersion,
+      workerVersionId,
       publicBuildManifestSha256,
       RUNTIME_MANIFEST_SHA256,
       BANK_SHA256,
       ROUTES_SHA256,
+      RUNTIME_BANK_PROJECTION_SHA256,
+      RUNTIME_ROUTES_PROJECTION_SHA256,
       ALLOCATION_SCHEDULE_SHA256,
       RANDOMIZATION_SEED_FINGERPRINT,
       RANDOMIZATION_ALGORITHM,
@@ -249,6 +330,10 @@ async function seedReadySyntheticRelease(
   const testletStatements: D1PreparedStatement[] = [];
   for (let ordinal = 0; ordinal < 100; ordinal += 1) {
     const testlet = syntheticTestlet(ordinal);
+    if (coordinatedTestletMutation && ordinal === 88) {
+      testlet.items[0].prompt = `${testlet.items[0].prompt} altered`;
+      testlet.itemsJson = JSON.stringify(testlet.items);
+    }
     const contentHash = ordinal === corruptTestletOrdinal
       ? "0".repeat(64)
       : await sha256Hex(stableJsonForTest({
@@ -278,10 +363,11 @@ async function seedReadySyntheticRelease(
   const routeOrders = evenOrderWilliamsSquareForTest(10);
   for (let routeIndex = 0; routeIndex < 10; routeIndex += 1) {
     const routeId = `R${String(routeIndex + 1).padStart(2, "0")}`;
-    const moduleOrder = routeOrders[routeIndex];
+    const sourceRouteIndex = balancedRouteRelabel ? (routeIndex + 1) % 10 : routeIndex;
+    const moduleOrder = routeOrders[sourceRouteIndex];
     const withinModuleOrder = unbalancedRouteOrder
       ? routeOrders[0]
-      : routeOrders[routeIndex];
+      : routeOrders[sourceRouteIndex];
     for (let modulePosition = 0; modulePosition < 10; modulePosition += 1) {
       const moduleIndex = moduleOrder[modulePosition];
       for (let withinModulePosition = 0; withinModulePosition < 10; withinModulePosition += 1) {
@@ -331,14 +417,16 @@ async function seedReadySyntheticRelease(
   }
   await runInBatches(allocationStatements);
 
-  await bindings.DB.batch([
-    bindings.DB.prepare("UPDATE studies SET active = 1 WHERE study_id = ? AND release_id = ?")
-      .bind(JA_STUDY_ID, RELEASE_ID),
-    bindings.DB.prepare("UPDATE studies SET active = 1 WHERE study_id = ? AND release_id = ?")
-      .bind(VI_STUDY_ID, RELEASE_ID),
-    bindings.DB.prepare("UPDATE runtime_releases SET active = 1 WHERE release_id = ?")
-      .bind(RELEASE_ID)
-  ]);
+  if (activate) {
+    await bindings.DB.batch([
+      bindings.DB.prepare("UPDATE studies SET active = 1 WHERE study_id = ? AND release_id = ?")
+        .bind(JA_STUDY_ID, RELEASE_ID),
+      bindings.DB.prepare("UPDATE studies SET active = 1 WHERE study_id = ? AND release_id = ?")
+        .bind(VI_STUDY_ID, RELEASE_ID),
+      bindings.DB.prepare("UPDATE runtime_releases SET active = 1 WHERE release_id = ?")
+        .bind(RELEASE_ID)
+    ]);
+  }
 }
 
 function installProlificSubmissionMock({
@@ -578,6 +666,8 @@ describe("UVLT Cloudflare field Worker", () => {
       fieldEnvironment({ EXPECTED_RUNTIME_MANIFEST_SHA256: "4".repeat(64) }),
       fieldEnvironment({ EXPECTED_BANK_SHA256: "4".repeat(64) }),
       fieldEnvironment({ EXPECTED_ROUTES_SHA256: "4".repeat(64) }),
+      fieldEnvironment({ EXPECTED_RUNTIME_BANK_PROJECTION_SHA256: "4".repeat(64) }),
+      fieldEnvironment({ EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256: "4".repeat(64) }),
       fieldEnvironment({ EXPECTED_ALLOCATION_SCHEDULE_SHA256: "5".repeat(64) }),
       fieldEnvironment({ EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT: `sha256:${"4".repeat(64)}` }),
       fieldEnvironment({ EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT: `sha256:${"0".repeat(64)}` }),
@@ -586,6 +676,13 @@ describe("UVLT Cloudflare field Worker", () => {
       fieldEnvironment({ EXPECTED_PROLIFIC_COMPLETION_ACTION: "AUTOMATICALLY_APPROVE" }),
       fieldEnvironment({ PARTICIPANT_HMAC_KEY: "different-test-only-hmac-key-with-at-least-32-bytes" }),
       fieldEnvironment({ PROLIFIC_COMPLETION_CODE: "OTHER123" }),
+      fieldEnvironment({
+        CF_VERSION_METADATA: {
+          id: "22222222-2222-4222-8222-222222222222",
+          tag: RELEASE_ID,
+          timestamp: "2026-07-20T00:00:00.000Z"
+        }
+      }),
       fieldEnvironment({
         CF_VERSION_METADATA: {
           id: "22222222-2222-4222-8222-222222222222",
@@ -672,6 +769,63 @@ describe("UVLT Cloudflare field Worker", () => {
     expect(await responseJson(response)).toMatchObject({ ok: true, collection_enabled: false });
   });
 
+  it("fully verifies an inactive release before activation and never caches mutable preflight data", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease({ activate: false });
+    const fieldEnv = fieldEnvironment();
+
+    const validPreflight = await requestWorker("/api/config", {}, fieldEnv);
+    const expectedReleaseBinding = await sha256Hex(stableJsonForTest({
+      schemaVersion: "uvlt-release-binding-1",
+      releaseId: RELEASE_ID,
+      appVersion: APP_VERSION,
+      workerVersionId: currentWorkerVersionId()
+    }));
+    expect(await responseJson(validPreflight)).toMatchObject({
+      ok: true,
+      collection_enabled: false,
+      release_integrity_verified: true,
+      activation_preflight_ready: true,
+      release_binding_sha256: expectedReleaseBinding
+    });
+
+    await bindings.DB.prepare(`
+      UPDATE runtime_testlets SET content_sha256 = ?
+      WHERE release_id = ? AND testlet_id = ?
+    `).bind("0".repeat(64), RELEASE_ID, syntheticTestlet(88).testletId).run();
+    const corruptPreflight = await requestWorker("/api/config", {}, fieldEnv);
+    expect(await responseJson(corruptPreflight)).toMatchObject({
+      ok: true,
+      collection_enabled: false,
+      release_integrity_verified: false,
+      activation_preflight_ready: false
+    });
+  });
+
+  it("rejects coordinated content and self-hash mutation against the pinned bank projection", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease({ coordinatedTestletMutation: true, activate: false });
+    const response = await requestWorker("/api/config", {}, fieldEnvironment());
+    expect(await responseJson(response)).toMatchObject({
+      ok: true,
+      collection_enabled: false,
+      release_integrity_verified: false,
+      activation_preflight_ready: false
+    });
+  });
+
+  it("rejects a structurally balanced route relabeling against the pinned route projection", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease({ balancedRouteRelabel: true, activate: false });
+    const response = await requestWorker("/api/config", {}, fieldEnvironment());
+    expect(await responseJson(response)).toMatchObject({
+      ok: true,
+      collection_enabled: false,
+      release_integrity_verified: false,
+      activation_preflight_ready: false
+    });
+  });
+
   it("caches only successful immutable runtime verification while repeating small readiness checks", async () => {
     await applySchema();
     await seedReadySyntheticRelease();
@@ -712,6 +866,20 @@ describe("UVLT Cloudflare field Worker", () => {
     ).bind(RELEASE_ID).first<{ active: number }>()).toEqual({ active: 0 });
   });
 
+  it("requires a canonical frozen Worker version UUID before release activation", async () => {
+    await applySchema();
+    await expect(seedReadySyntheticRelease({ workerVersionId: null })).rejects.toThrow();
+    expect(await bindings.DB.prepare(
+      "SELECT active, worker_version_id FROM runtime_releases WHERE release_id = ?"
+    ).bind(RELEASE_ID).first<{ active: number; worker_version_id: string | null }>()).toEqual({
+      active: 0,
+      worker_version_id: null
+    });
+    await expect(bindings.DB.prepare(
+      "UPDATE runtime_releases SET worker_version_id = 'NOT-A-CLOUDFLARE-UUID' WHERE release_id = ?"
+    ).bind(RELEASE_ID).run()).rejects.toThrow();
+  });
+
   it("rejects launch before allocation when the live Prolific completion configuration is not exact", async () => {
     const cases = [
       { completionCode: "OTHER123" },
@@ -739,6 +907,7 @@ describe("UVLT Cloudflare field Worker", () => {
   it("fails closed when D1 appVersion or public manifest identity differs", async () => {
     for (const releaseIdentity of [
       { appVersion: "0.1.0-other" },
+      { workerVersionId: "33333333-3333-4333-8333-333333333333" },
       { publicBuildManifestSha256: "5".repeat(64) }
     ]) {
       await applySchema();
@@ -770,9 +939,10 @@ describe("UVLT Cloudflare field Worker", () => {
     await bindings.DB.prepare(`
       INSERT INTO runtime_releases (
         release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
+        runtime_bank_projection_sha256, runtime_routes_projection_sha256,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
     `).bind(
       RELEASE_ID,
       APP_VERSION,
@@ -780,6 +950,8 @@ describe("UVLT Cloudflare field Worker", () => {
       RUNTIME_MANIFEST_SHA256,
       BANK_SHA256,
       ROUTES_SHA256,
+      "6".repeat(64),
+      "7".repeat(64),
       PARTICIPANT_HMAC_KEY_FINGERPRINT,
       COMPLETION_CODE_FINGERPRINT,
       COMPLETION_ACTION,
@@ -806,15 +978,18 @@ describe("UVLT Cloudflare field Worker", () => {
     await expect(bindings.DB.prepare(`
       INSERT INTO runtime_releases (
         release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
+        runtime_bank_projection_sha256, runtime_routes_projection_sha256,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES ('release-direct-active', ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 1, ?, ?)
+      ) VALUES ('release-direct-active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 1, ?, ?)
     `).bind(
       APP_VERSION,
       PUBLIC_BUILD_MANIFEST_SHA256,
       RUNTIME_MANIFEST_SHA256,
       BANK_SHA256,
       ROUTES_SHA256,
+      "6".repeat(64),
+      "7".repeat(64),
       PARTICIPANT_HMAC_KEY_FINGERPRINT,
       COMPLETION_CODE_FINGERPRINT,
       COMPLETION_ACTION,
@@ -834,6 +1009,9 @@ describe("UVLT Cloudflare field Worker", () => {
       ["public manifest identity update", bindings.DB.prepare(
         "UPDATE runtime_releases SET public_build_manifest_sha256 = ? WHERE release_id = ?"
       ).bind("6".repeat(64), RELEASE_ID)],
+      ["Worker version identity update", bindings.DB.prepare(
+        "UPDATE runtime_releases SET worker_version_id = ? WHERE release_id = ?"
+      ).bind("33333333-3333-4333-8333-333333333333", RELEASE_ID)],
       ["release delete", bindings.DB.prepare(
         "DELETE FROM runtime_releases WHERE release_id = ?"
       ).bind(RELEASE_ID)],
