@@ -333,6 +333,17 @@ function renderState() {
 async function initialise() {
   pendingSubmission = null;
   updateSaveState(null);
+  if (window.location.pathname === "/recruitment-closed") {
+    progressRoot.hidden = true;
+    document.title = "Recruitment closed · UVLT Vocabulary Study";
+    renderMessage(
+      "This study is not accepting new participants",
+      "No new study session was started on this site. Please return to Prolific and follow the instructions shown there. If you need help, contact the researcher through Prolific."
+    );
+    saveState.textContent = "No session started";
+    return;
+  }
+  progressRoot.hidden = false;
   renderMessage("Connecting to the study", "Checking the collection release and your secure Prolific session.", { busy: true, focus: false });
   try {
     const config = await api("/api/config");

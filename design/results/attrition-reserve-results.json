@@ -35,9 +35,10 @@
     "The simulation models completion status only; it contains no stimuli, participant data, allocation schedule, or operational randomization seed."
   ],
   "limitations": [
-    "These scenarios inform but do not determine the final sample size.",
+    "These fixed-cap scenarios supported adoption of a 300-protocol-completer target and an immutable 420-start hard cap per L1, but they do not validate target-triggered sequential stopping.",
+    "The model omits arrival times, completion latency, Prolific pause delay, in-flight overshoot, and the recruitment deadline.",
     "Pilot-estimated overall and differential attrition, exclusions, invalid submissions, and their uncertainty must be added before preregistration.",
-    "If reserve capacity is selected, the production schedule and D1 capacity must be extended and independently validated before recruitment."
+    "The adopted 420-start implementation still requires a fresh release-specific schedule, D1 seed, deployment hashes, and independent validation before recruitment."
   ],
   "results": [
     {
@@ -1722,6 +1723,6 @@
     }
   ],
   "integrity": {
-    "payloadSha256": "aefa79e809eba8c3056f3e2b7f8001fc545a88686daa2446aa74ef0d8c6b2ef5"
+    "payloadSha256": "7e2bd96b17159a3ae6f09049e405f425c19ce25b7f34a70e81a3b387858ebbe1"
   }
 }

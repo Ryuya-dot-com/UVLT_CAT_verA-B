@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   L1_STRATA,
+  HARD_CAP_STARTS_PER_L1,
   OPTION_LAYOUTS,
   OPTION_LAYOUT_ALGORITHM,
   RANDOMIZATION_ALGORITHM,
   ROUTE_IDS,
+  TARGET_PROTOCOL_COMPLETERS_PER_L1,
   buildBalanceAudit,
   buildEvenOrderWilliamsSquare,
   generateAllocationSchedule,
@@ -56,7 +58,7 @@ const routesPayloadSha256 = routes.integrity.payloadSha256;
 const releaseId = "uvlt-fixed-ab-randomization-test";
 const seed = "test-only-randomization-seed-32-bytes-minimum";
 const KNOWN_SCHEDULE_PAYLOAD_SHA256 =
-  "309df24906f9c1d4761b561e711a5f63b776d5c04707ca4cb11b975692db0adb";
+  "44f2a50aacac2d2f2ac4e2a5373c7ae95dc075b2db81c755b04c73b2bf16ba6f";
 
 function scheduleFor(seedValue = seed) {
   return generateAllocationSchedule({ seed: seedValue, releaseId, routesPayloadSha256 });
@@ -121,12 +123,16 @@ test("schedule satisfies every block and crossed route-layout constraint", () =>
   const schedule = scheduleFor();
   const summary = validateAllocationSchedule(schedule, { releaseId, routesPayloadSha256 });
   assert.equal(summary.passed, true);
-  assert.equal(summary.totalSlots, 600);
+  assert.equal(summary.totalSlots, 840);
+  assert.equal(schedule.recruitmentPolicy.targetProtocolCompletersPerL1,
+    TARGET_PROTOCOL_COMPLETERS_PER_L1);
+  assert.equal(schedule.recruitmentPolicy.hardCapStartsPerL1,
+    HARD_CAP_STARTS_PER_L1);
   assert.deepEqual(summary.perL1.map(entry => entry.l1), L1_STRATA);
   for (const l1 of L1_STRATA) {
     const slots = schedule.slots.filter(slot => slot.l1 === l1);
-    assert.equal(slots.length, 300);
-    for (let block = 0; block < 30; block += 1) {
+    assert.equal(slots.length, 420);
+    for (let block = 0; block < 42; block += 1) {
       const blockSlots = slots.filter(slot => slot.blockIndex === block);
       assert.equal(blockSlots.length, 10);
       assert.deepEqual([...new Set(blockSlots.map(slot => slot.routeId))].sort(), [...ROUTE_IDS]);
@@ -134,12 +140,36 @@ test("schedule satisfies every block and crossed route-layout constraint", () =>
     for (const routeId of ROUTE_IDS) {
       for (let optionLayoutIndex = 0; optionLayoutIndex < 6; optionLayoutIndex += 1) {
         assert.equal(slots.filter(slot => slot.routeId === routeId &&
-          slot.optionLayoutIndex === optionLayoutIndex).length, 5);
-        for (let macroreplicateIndex = 0; macroreplicateIndex < 5; macroreplicateIndex += 1) {
+          slot.optionLayoutIndex === optionLayoutIndex).length, 7);
+        for (let macroreplicateIndex = 0; macroreplicateIndex < 7; macroreplicateIndex += 1) {
           assert.equal(slots.filter(slot => slot.macroreplicateIndex === macroreplicateIndex &&
             slot.routeId === routeId && slot.optionLayoutIndex === optionLayoutIndex).length, 1);
         }
       }
+    }
+  }
+});
+
+test("every allocation prefix preserves near-balance without outcome-driven replacement", () => {
+  const schedule = scheduleFor();
+  for (const l1 of L1_STRATA) {
+    const slots = schedule.slots.filter(slot => slot.l1 === l1);
+    for (let prefixLength = 1; prefixLength <= slots.length; prefixLength += 1) {
+      const routeCounts = new Map(ROUTE_IDS.map(routeId => [routeId, 0]));
+      const cellCounts = new Map(ROUTE_IDS.flatMap(routeId =>
+        Array.from({ length: 6 }, (_value, optionLayoutIndex) =>
+          [`${routeId}|${optionLayoutIndex}`, 0])));
+      for (const slot of slots.slice(0, prefixLength)) {
+        routeCounts.set(slot.routeId, routeCounts.get(slot.routeId) + 1);
+        const cell = `${slot.routeId}|${slot.optionLayoutIndex}`;
+        cellCounts.set(cell, cellCounts.get(cell) + 1);
+      }
+      const values = [...routeCounts.values()];
+      assert.ok(Math.max(...values) - Math.min(...values) <= 1,
+        `${l1} route imbalance exceeded one at prefix ${prefixLength}`);
+      const cellValues = [...cellCounts.values()];
+      assert.ok(Math.max(...cellValues) - Math.min(...cellValues) <= 1,
+        `${l1} route-layout imbalance exceeded one at prefix ${prefixLength}`);
     }
   }
 });
@@ -175,6 +205,9 @@ test("balance audit is aggregate-only and omits private schedule material", () =
   const schedule = scheduleFor();
   const audit = buildBalanceAudit({ schedule, routes });
   assert.equal(audit.allocationBalance.passed, true);
+  assert.equal(audit.allocationBalance.totalHardCapAllocations, 840);
+  assert.equal(audit.design.recruitmentPolicy.targetProtocolCompletersPerL1, 300);
+  assert.equal(audit.design.recruitmentPolicy.hardCapStartsPerL1, 420);
   assert.equal(audit.routeBalance.passed, true);
   assert.equal(audit.allocationSchedulePayloadSha256, schedule.integrity.payloadSha256);
   assert.equal(audit.randomizationSeedFingerprint, schedule.seedFingerprint);

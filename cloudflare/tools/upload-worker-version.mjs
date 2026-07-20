@@ -12,6 +12,7 @@ import {
   collectWorkerUploadInputs,
   releaseHandoffIdentitySha256
 } from "./worker-upload-inputs.mjs";
+import { validateRecruitmentPolicy } from "./randomization-design.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -224,7 +225,8 @@ try {
     throw new Error("Release, Wrangler, package, and local Wrangler metadata must be valid strict JSON");
   }
 
-  assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-5", "Private release config schema is unsupported");
+  assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Private release config schema is unsupported");
+  validateRecruitmentPolicy(release.recruitmentPolicy);
   assert(release.active === false, "Version upload requires an inactive release; activation occurs only after ID capture and D1 preparation");
   assert(release.workerVersionId === null, "Version upload requires workerVersionId to be null before Cloudflare assigns it");
   assert(release.frozenAt === null, "Version upload requires frozenAt to remain null until Cloudflare assigns the immutable version ID");
@@ -400,7 +402,7 @@ try {
       workerVersionTag: release.releaseId,
       uploadInputsSha256: sourceInputs.sha256,
       attestation: path.relative(project, outputPath),
-      nextStep: "Copy workerVersionId into the schema-v5 release config, freeze it, then build and review the inactive D1 seed."
+      nextStep: "Copy workerVersionId into the schema-v6 release config, freeze it, then build and review the inactive D1 seed."
     }, null, 2));
   }
 } finally {

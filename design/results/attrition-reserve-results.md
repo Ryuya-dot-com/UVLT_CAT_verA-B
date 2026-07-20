@@ -3,7 +3,7 @@
 - Public simulation seed: `uvlt-fixed-ab-public-attrition-reserve-simulation-v1`
 - Algorithm: `xoshiro128starstar-independent-cell-bernoulli-v1`
 - Monte Carlo replicates: 20,000 per scenario
-- JSON payload SHA-256: `aefa79e809eba8c3056f3e2b7f8001fc545a88686daa2446aa74ef0d8c6b2ef5`
+- JSON payload SHA-256: `7e2bd96b17159a3ae6f09049e405f425c19ce25b7f34a70e81a3b387858ebbe1`
 
 The exact probability is primary for attaining at least 300 completers per L1 under common independent attrition. Balance quantiles and P(all cells ≥1) are unconditional Monte Carlo summaries; P(all cells ≥5) is exact under the same model. Ranges are maximum minus minimum completer counts.
 
@@ -25,4 +25,4 @@ The exact probability is primary for attaining at least 300 completers per L1 un
 | 420 | 15% | 1 − 3.995e-13 | 1 − 7.990e-13 | 345–357–369 | 7/10 | 7/12 | 2/3 | 4/5 | 0.9999 | 0.0101 |
 | 420 | 20% | 0.999990 | 0.999980 | 322–336–349 | 8/11 | 8/13 | 2/3 | 4/5 | 0.9992 | 6.690e-5 |
 
-These scenarios inform, but do not determine, sample size. Before preregistration, rerun the design using pilot-estimated overall and differential attrition (including L1, route, option-layout, burden/position, exclusions, and invalid submissions) with uncertainty propagated. Reserve capacity must be implemented in complete 60-start crossings and validated separately before recruitment.
+These fixed-cap scenarios supported the adopted target of 300 protocol completers and immutable hard cap of 420 starts per L1, but they do not validate target-triggered sequential stopping. Before preregistration, run a separate pilot-informed model of arrival times, completion latency, Prolific pause delay, in-flight overshoot, the recruitment deadline, and overall and differential attrition (including L1, route, option-layout, burden/position, exclusions, and invalid submissions), with uncertainty propagated. The release-specific 840-slot schedule, D1 seed, deployment hashes, and balance audit still require fresh generation and independent validation.

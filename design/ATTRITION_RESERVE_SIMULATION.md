@@ -19,11 +19,12 @@ Completer balance is summarized unconditionally over every simulated completion 
 
 ## Interpretation boundary
 
-This analysis informs—but does not determine—the final sample size. Its homogeneous attrition model is deliberately transparent and is unlikely to capture every field mechanism. After the pilot, the simulation must be extended using prespecified estimates and uncertainty for:
+This analysis supported adopting a target of 300 protocol completers and an immutable hard cap of 420 unique D1 starts within each L1. The runtime now implements that capacity and refuses new allocations when the L1-specific target or cap is reached. This fixed-cap simulation does not validate the full sequential stopping process: it assumes all candidate starts are available at once and has no arrival times, completion latency, Prolific pause delay, or in-flight overshoot. After the pilot, a separate sequential simulation must be added using prespecified estimates and uncertainty for:
 
 - overall attrition and exclusion/invalid-submission rates within each L1;
 - differential attrition by L1, route, option layout, and their interaction;
 - completion changes associated with test position, burden, device, and recruitment timing;
-- any planned replacement and stopping rules.
+- the target-triggered Prolific pause, recruitment deadline, in-flight grace period, and overshoot;
+- the fixed rule that allocation indices and quality exclusions are not replaced.
 
-Those pilot-based scenarios should be rerun before the confirmatory preregistration is frozen. If 360 or 420 starts per L1 is selected, this result does not itself create that capacity: the participant-allocation schedule, D1 schema/data, deployment configuration, and balance audit must first be extended and independently validated in complete 60-start increments.
+Those pilot-based scenarios must be run before the confirmatory preregistration is frozen. The checked-in 420-start implementation uses seven complete 60-start macroreplicates per L1 (840 slots total), but its real release schedule, D1 seed, deployment configuration, and balance audit still require independent review and fresh release-specific hashes. A missed target at 420 is reported as a shortfall; the cap is not extended after outcomes are observed.

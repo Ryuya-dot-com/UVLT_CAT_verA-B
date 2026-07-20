@@ -9,6 +9,7 @@ import {
   payloadSha256,
   sha256Hex,
   stableStringify,
+  validateRecruitmentPolicy,
   validateWilliamsRouteBalance
 } from "./randomization-design.mjs";
 
@@ -130,8 +131,9 @@ const [config, routes] = await Promise.all([
   readJson(routesPath, "Route artifact")
 ]);
 assert(isPlainObject(config), "Release config must be a plain object");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-5",
-  "Randomization schedule generation requires release config schema v5");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-6",
+  "Randomization schedule generation requires release config schema v6");
+validateRecruitmentPolicy(config.recruitmentPolicy);
 assert(typeof config.releaseId === "string", "Release config must contain releaseId");
 assert(isPlainObject(config.expectedHashes), "Release config must contain expectedHashes");
 assert(typeof config.expectedHashes.routesPayloadSha256 === "string" &&

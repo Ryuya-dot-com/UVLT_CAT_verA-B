@@ -18,7 +18,7 @@ import {
 const nonzero = "1".repeat(64);
 const fingerprint = `sha256:${nonzero}`;
 const completeRelease = Object.freeze({
-  schemaVersion: "uvlt-fixed-ab-field-release-config-5",
+  schemaVersion: "uvlt-fixed-ab-field-release-config-6",
   releaseId: "uvlt-fixed-ab-release-20260720",
   appVersion: "0.1.0-dev",
   workerVersionId: "11111111-1111-4111-8111-111111111111",
@@ -31,6 +31,14 @@ const completeRelease = Object.freeze({
   participantHmacKeyFingerprint: fingerprint,
   prolificCompletionCodeFingerprint: fingerprint,
   prolificCompletionAction: "MANUALLY_REVIEW",
+  recruitmentPolicy: {
+    targetProtocolCompletersPerL1: 300,
+    hardCapStartsPerL1: 420,
+    stopNewAllocationsAtTarget: true,
+    retainServerCommittedPartialResponses: true,
+    protocolCompletionDefinition: "d1-completed-after-100-testlets-300-responses-9-breaks-v1",
+    partialResponseRetentionDefinition: "consented-nonwithdrawn-server-committed-complete-testlets-v1"
+  },
   expectedHashes: {
     runtimeManifestPayloadSha256: nonzero,
     bankPayloadSha256: nonzero,
@@ -121,8 +129,11 @@ test("activation SQL commits a complete release and rolls back a partial attempt
         randomization_algorithm, option_layout_algorithm,
         participant_hmac_key_fingerprint,
         prolific_completion_code_fingerprint, prolific_completion_action,
+        target_protocol_completers_per_l1, hard_cap_starts_per_l1,
+        stop_new_allocations_at_target, retain_server_committed_partial_responses,
+        protocol_completion_definition, partial_response_retention_definition,
         created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       releaseId, completeRelease.appVersion, completeRelease.workerVersionId,
       nonzero, nonzero, nonzero, nonzero, nonzero, nonzero, nonzero,
@@ -132,6 +143,11 @@ test("activation SQL commits a complete release and rolls back a partial attempt
       completeRelease.participantHmacKeyFingerprint,
       completeRelease.prolificCompletionCodeFingerprint,
       completeRelease.prolificCompletionAction,
+      completeRelease.recruitmentPolicy.targetProtocolCompletersPerL1,
+      completeRelease.recruitmentPolicy.hardCapStartsPerL1,
+      1, 1,
+      completeRelease.recruitmentPolicy.protocolCompletionDefinition,
+      completeRelease.recruitmentPolicy.partialResponseRetentionDefinition,
       completeRelease.createdAt, completeRelease.frozenAt
     );
 
@@ -191,7 +207,7 @@ test("activation SQL commits a complete release and rolls back a partial attempt
       ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     for (const l1 of ["ja", "vi"]) {
-      for (let block = 0; block < 30; block += 1) {
+      for (let block = 0; block < 42; block += 1) {
         for (let routeIndex = 0; routeIndex < 10; routeIndex += 1) {
           insertSlot.run(
             releaseId,
@@ -245,6 +261,7 @@ test("activation SQL rejects incomplete or mismatched release authority", () => 
     release => { release.workerVersionId = null; },
     release => { release.frozenAt = null; },
     release => { release.approvals.ethicsApprovalRecorded = false; },
+    release => { release.recruitmentPolicy.hardCapStartsPerL1 = 421; },
     release => { release.expectedHashes.bankPayloadSha256 = "0".repeat(64); },
     release => { release.studies[0].active = false; },
     release => { release.studies[1].l1 = "vi"; }

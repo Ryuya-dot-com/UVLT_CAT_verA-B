@@ -1,5 +1,5 @@
 {
-  "schemaVersion": "uvlt-fixed-ab-field-release-config-5",
+  "schemaVersion": "uvlt-fixed-ab-field-release-config-6",
   "releaseId": "uvlt-fixed-ab-unapproved-20260720",
   "appVersion": "0.1.0-dev",
   "workerVersionId": null,
@@ -12,6 +12,14 @@
   "participantHmacKeyFingerprint": null,
   "prolificCompletionCodeFingerprint": null,
   "prolificCompletionAction": null,
+  "recruitmentPolicy": {
+    "targetProtocolCompletersPerL1": 300,
+    "hardCapStartsPerL1": 420,
+    "stopNewAllocationsAtTarget": true,
+    "retainServerCommittedPartialResponses": true,
+    "protocolCompletionDefinition": "d1-completed-after-100-testlets-300-responses-9-breaks-v1",
+    "partialResponseRetentionDefinition": "consented-nonwithdrawn-server-committed-complete-testlets-v1"
+  },
   "expectedHashes": {
     "runtimeManifestPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "bankPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",

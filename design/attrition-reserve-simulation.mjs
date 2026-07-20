@@ -432,9 +432,10 @@ export function runAttritionReserveSimulation({
       "The simulation models completion status only; it contains no stimuli, participant data, allocation schedule, or operational randomization seed."
     ],
     limitations: [
-      "These scenarios inform but do not determine the final sample size.",
+      "These fixed-cap scenarios supported adoption of a 300-protocol-completer target and an immutable 420-start hard cap per L1, but they do not validate target-triggered sequential stopping.",
+      "The model omits arrival times, completion latency, Prolific pause delay, in-flight overshoot, and the recruitment deadline.",
       "Pilot-estimated overall and differential attrition, exclusions, invalid submissions, and their uncertainty must be added before preregistration.",
-      "If reserve capacity is selected, the production schedule and D1 capacity must be extended and independently validated before recruitment."
+      "The adopted 420-start implementation still requires a fresh release-specific schedule, D1 seed, deployment hashes, and independent validation before recruitment."
     ],
     results,
     integrity: { payloadSha256: "" }
@@ -554,7 +555,7 @@ export function formatResultsMarkdown(artifact) {
   }
   lines.push(
     "",
-    "These scenarios inform, but do not determine, sample size. Before preregistration, rerun the design using pilot-estimated overall and differential attrition (including L1, route, option-layout, burden/position, exclusions, and invalid submissions) with uncertainty propagated. Reserve capacity must be implemented in complete 60-start crossings and validated separately before recruitment.",
+    "These fixed-cap scenarios supported the adopted target of 300 protocol completers and immutable hard cap of 420 starts per L1, but they do not validate target-triggered sequential stopping. Before preregistration, run a separate pilot-informed model of arrival times, completion latency, Prolific pause delay, in-flight overshoot, the recruitment deadline, and overall and differential attrition (including L1, route, option-layout, burden/position, exclusions, and invalid submissions), with uncertainty propagated. The release-specific 840-slot schedule, D1 seed, deployment hashes, and balance audit still require fresh generation and independent validation.",
     ""
   );
   return lines.join("\n");

@@ -8,6 +8,7 @@ import {
   sha256Hex,
   payloadSha256,
   validateAllocationSchedule,
+  validateRecruitmentPolicy,
   validateWilliamsRouteBalance
 } from "./randomization-design.mjs";
 import {
@@ -159,9 +160,10 @@ assertExactKeys(config, [
   "schemaVersion", "releaseId", "appVersion", "workerVersionId", "createdAt", "frozenAt", "active",
   "randomizationSeedFingerprint", "randomizationAlgorithm", "optionLayoutAlgorithm",
   "participantHmacKeyFingerprint", "prolificCompletionCodeFingerprint",
-  "prolificCompletionAction", "expectedHashes", "approvals", "studies"
+  "prolificCompletionAction", "recruitmentPolicy", "expectedHashes", "approvals", "studies"
 ], "Release config");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-5", "Unsupported release config schema");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Unsupported release config schema");
+validateRecruitmentPolicy(config.recruitmentPolicy);
 assertBoundedString(config.releaseId, "releaseId", { min: 8, max: 128, pattern: /^[a-z0-9][a-z0-9._-]+$/ });
 assertBoundedString(config.appVersion, "appVersion", { min: 8, max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]+$/ });
 assert(config.workerVersionId === null || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(config.workerVersionId), "workerVersionId must be null or a canonical lowercase Cloudflare Worker version UUID");
@@ -432,6 +434,8 @@ if (allocationSchedule === null) {
   assert(config.randomizationSeedFingerprint === allocationSchedule.seedFingerprint, "Release config randomizationSeedFingerprint does not match the allocation schedule");
   assert(config.randomizationAlgorithm === allocationSchedule.algorithm, "Release config randomizationAlgorithm does not match the allocation schedule");
   assert(config.optionLayoutAlgorithm === allocationSchedule.optionLayoutAlgorithm, "Release config optionLayoutAlgorithm does not match the allocation schedule");
+  assert(stableStringify(config.recruitmentPolicy) === stableStringify(allocationSchedule.recruitmentPolicy),
+    "Release config recruitmentPolicy does not match the allocation schedule");
   for (const slot of allocationSchedule.slots) {
     allocationRows.push({
       l1: slot.l1,
@@ -442,7 +446,7 @@ if (allocationSchedule === null) {
       optionLayoutId: slot.optionLayoutIndex
     });
   }
-  assert(allocationRows.length === 600, "Allocation schedule must produce exactly 600 D1 slots");
+  assert(allocationRows.length === 840, "Allocation schedule must produce exactly 840 D1 slots");
 }
 
 const lines = [
@@ -453,6 +457,8 @@ const lines = [
   "  runtime_bank_projection_sha256, runtime_routes_projection_sha256,",
   "  allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm, participant_hmac_key_fingerprint,",
   "  prolific_completion_code_fingerprint, prolific_completion_action,",
+  "  target_protocol_completers_per_l1, hard_cap_starts_per_l1, stop_new_allocations_at_target,",
+  "  retain_server_committed_partial_responses, protocol_completion_definition, partial_response_retention_definition,",
   "  expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at",
   ") VALUES (",
   `  ${sql(config.releaseId)}, ${sql(config.appVersion)}, ${sql(config.workerVersionId)}, ${sql(config.expectedHashes.publicBuildManifestSha256)}, ${sql(manifest.integrity.payloadSha256)},`,
@@ -460,6 +466,8 @@ const lines = [
   `  ${sql(runtimeBankProjectionSha256)}, ${sql(runtimeRoutesProjectionSha256)}, ${sql(allocationSchedule?.integrity.payloadSha256)},`,
   `  ${sql(config.randomizationSeedFingerprint)}, ${sql(config.randomizationAlgorithm)}, ${sql(config.optionLayoutAlgorithm)}, ${sql(config.participantHmacKeyFingerprint)},`,
   `  ${sql(config.prolificCompletionCodeFingerprint)}, ${sql(config.prolificCompletionAction)},`,
+  `  ${config.recruitmentPolicy.targetProtocolCompletersPerL1}, ${config.recruitmentPolicy.hardCapStartsPerL1}, 1, 1,`,
+  `  ${sql(config.recruitmentPolicy.protocolCompletionDefinition)}, ${sql(config.recruitmentPolicy.partialResponseRetentionDefinition)},`,
   `  100, 300, 9, 0, ${sql(config.createdAt)}, ${sql(config.frozenAt)}`,
   ");",
   ""

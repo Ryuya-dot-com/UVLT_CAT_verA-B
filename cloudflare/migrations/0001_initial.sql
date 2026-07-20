@@ -59,6 +59,18 @@ CREATE TABLE runtime_releases (
     )),
   prolific_completion_action TEXT
     CHECK (prolific_completion_action IS NULL OR prolific_completion_action IN ('MANUALLY_REVIEW', 'AUTOMATICALLY_APPROVE')),
+  target_protocol_completers_per_l1 INTEGER NOT NULL
+    CHECK (target_protocol_completers_per_l1 = 300),
+  hard_cap_starts_per_l1 INTEGER NOT NULL
+    CHECK (hard_cap_starts_per_l1 = 420),
+  stop_new_allocations_at_target INTEGER NOT NULL
+    CHECK (stop_new_allocations_at_target = 1),
+  retain_server_committed_partial_responses INTEGER NOT NULL
+    CHECK (retain_server_committed_partial_responses = 1),
+  protocol_completion_definition TEXT NOT NULL
+    CHECK (protocol_completion_definition = 'd1-completed-after-100-testlets-300-responses-9-breaks-v1'),
+  partial_response_retention_definition TEXT NOT NULL
+    CHECK (partial_response_retention_definition = 'consented-nonwithdrawn-server-committed-complete-testlets-v1'),
   expected_testlets INTEGER NOT NULL DEFAULT 100 CHECK (expected_testlets = 100),
   expected_items INTEGER NOT NULL DEFAULT 300 CHECK (expected_items = 300),
   expected_breaks INTEGER NOT NULL DEFAULT 9 CHECK (expected_breaks = 9),
@@ -131,13 +143,13 @@ CREATE TABLE runtime_route_testlets (
 );
 
 -- Each L1 stratum receives an independently generated, frozen sequence of
--- thirty randomized blocks. Every block contains each Williams route once;
+-- forty-two randomized blocks. Every block contains each Williams route once;
 -- the six option layouts are balanced within every route and L1 stratum.
 CREATE TABLE runtime_allocation_slots (
   release_id TEXT NOT NULL,
   l1 TEXT NOT NULL CHECK (l1 IN ('ja', 'vi')),
-  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 299),
-  randomization_block INTEGER NOT NULL CHECK (randomization_block BETWEEN 0 AND 29),
+  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 419),
+  randomization_block INTEGER NOT NULL CHECK (randomization_block BETWEEN 0 AND 41),
   block_position INTEGER NOT NULL CHECK (block_position BETWEEN 1 AND 10),
   route_id TEXT NOT NULL CHECK (route_id IN ('R01', 'R02', 'R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10')),
   option_layout_id INTEGER NOT NULL CHECK (option_layout_id BETWEEN 0 AND 5),
@@ -162,8 +174,8 @@ CREATE TABLE sessions (
     CHECK (length(participant_link_hmac) = 64 AND participant_link_hmac NOT GLOB '*[^0-9a-f]*'),
   submission_link_hmac TEXT NOT NULL
     CHECK (length(submission_link_hmac) = 64 AND submission_link_hmac NOT GLOB '*[^0-9a-f]*'),
-  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 299),
-  randomization_block INTEGER NOT NULL CHECK (randomization_block BETWEEN 0 AND 29),
+  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 419),
+  randomization_block INTEGER NOT NULL CHECK (randomization_block BETWEEN 0 AND 41),
   block_position INTEGER NOT NULL CHECK (block_position BETWEEN 1 AND 10),
   route_id TEXT NOT NULL CHECK (route_id IN ('R01', 'R02', 'R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10')),
   option_layout_id INTEGER NOT NULL CHECK (option_layout_id BETWEEN 0 AND 5),
@@ -198,6 +210,31 @@ CREATE TABLE sessions (
   UNIQUE (study_id, participant_link_hmac),
   UNIQUE (release_id, l1, allocation_index),
   UNIQUE (session_id, option_layout_id)
+);
+
+-- These minimal append-only ledgers contain no direct participant identifiers
+-- and preserve the cumulative start and completion counts even if linked
+-- session rows must later be removed under an approved withdrawal/redaction
+-- procedure. Allocation indices are therefore never recycled, and neither
+-- stopping count can move backwards after a participant-data deletion.
+CREATE TABLE allocation_start_ledger (
+  release_id TEXT NOT NULL,
+  l1 TEXT NOT NULL CHECK (l1 IN ('ja', 'vi')),
+  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 419),
+  PRIMARY KEY (release_id, l1, allocation_index),
+  FOREIGN KEY (release_id, l1, allocation_index)
+    REFERENCES runtime_allocation_slots(release_id, l1, allocation_index)
+    ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
+CREATE TABLE protocol_completion_ledger (
+  release_id TEXT NOT NULL,
+  l1 TEXT NOT NULL CHECK (l1 IN ('ja', 'vi')),
+  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 419),
+  PRIMARY KEY (release_id, l1, allocation_index),
+  FOREIGN KEY (release_id, l1, allocation_index)
+    REFERENCES allocation_start_ledger(release_id, l1, allocation_index)
+    ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
 CREATE TABLE testlet_submissions (
@@ -308,6 +345,12 @@ BEGIN
     NEW.participant_hmac_key_fingerprint IS NOT OLD.participant_hmac_key_fingerprint OR
     NEW.prolific_completion_code_fingerprint IS NOT OLD.prolific_completion_code_fingerprint OR
     NEW.prolific_completion_action IS NOT OLD.prolific_completion_action OR
+    NEW.target_protocol_completers_per_l1 IS NOT OLD.target_protocol_completers_per_l1 OR
+    NEW.hard_cap_starts_per_l1 IS NOT OLD.hard_cap_starts_per_l1 OR
+    NEW.stop_new_allocations_at_target IS NOT OLD.stop_new_allocations_at_target OR
+    NEW.retain_server_committed_partial_responses IS NOT OLD.retain_server_committed_partial_responses OR
+    NEW.protocol_completion_definition IS NOT OLD.protocol_completion_definition OR
+    NEW.partial_response_retention_definition IS NOT OLD.partial_response_retention_definition OR
     NEW.expected_testlets IS NOT OLD.expected_testlets OR
     NEW.expected_items IS NOT OLD.expected_items OR
     NEW.expected_breaks IS NOT OLD.expected_breaks OR
@@ -356,12 +399,12 @@ BEGIN
 
   SELECT CASE WHEN (
     SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = NEW.release_id
-  ) <> 600 OR (
+  ) <> 840 OR (
     SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = NEW.release_id AND l1 = 'ja'
-  ) <> 300 OR (
+  ) <> 420 OR (
     SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = NEW.release_id AND l1 = 'vi'
-  ) <> 300
-    THEN RAISE(ABORT, 'runtime release requires exactly 300 allocation slots per L1') END;
+  ) <> 420
+    THEN RAISE(ABORT, 'runtime release requires exactly 420 allocation slots per L1') END;
 
   SELECT CASE WHEN (
     SELECT COUNT(*) FROM (
@@ -373,8 +416,8 @@ BEGIN
         COUNT(DISTINCT route_id) = 10 AND
         COUNT(DISTINCT option_layout_id) = 6
     )
-  ) <> 60
-    THEN RAISE(ABORT, 'runtime release requires 60 complete route-and-layout randomization blocks') END;
+  ) <> 84
+    THEN RAISE(ABORT, 'runtime release requires 84 complete route-and-layout randomization blocks') END;
 
   SELECT CASE WHEN (
     SELECT COUNT(*) FROM (
@@ -393,10 +436,17 @@ BEGIN
       FROM runtime_allocation_slots
       WHERE release_id = NEW.release_id
       GROUP BY l1, route_id, option_layout_id
-      HAVING COUNT(*) = 5
+      HAVING COUNT(*) = 7
     )
   ) <> 120
-    THEN RAISE(ABORT, 'runtime release requires every L1-route-layout cell exactly five times') END;
+    THEN RAISE(ABORT, 'runtime release requires every L1-route-layout cell exactly seven times') END;
+
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM allocation_start_ledger WHERE release_id = NEW.release_id
+  ) <> 0 OR (
+    SELECT COUNT(*) FROM protocol_completion_ledger WHERE release_id = NEW.release_id
+  ) <> 0
+    THEN RAISE(ABORT, 'runtime release cannot activate after participant allocation') END;
 END;
 
 CREATE TRIGGER studies_reject_active_release_insert
@@ -548,6 +598,104 @@ BEGIN
   SELECT RAISE(ABORT, 'session linkage and allocation identity are immutable');
 END;
 
+CREATE TRIGGER sessions_record_start
+AFTER INSERT ON sessions
+BEGIN
+  INSERT INTO allocation_start_ledger (release_id, l1, allocation_index)
+  VALUES (NEW.release_id, NEW.l1, NEW.allocation_index);
+END;
+
+CREATE TRIGGER allocation_start_ledger_require_session
+BEFORE INSERT ON allocation_start_ledger
+WHEN NOT EXISTS (
+  SELECT 1 FROM sessions s
+  WHERE s.release_id = NEW.release_id AND s.l1 = NEW.l1
+    AND s.allocation_index = NEW.allocation_index
+)
+BEGIN
+  SELECT RAISE(ABORT, 'allocation start ledger requires its originating session');
+END;
+
+CREATE TRIGGER sessions_require_in_progress_insert
+BEFORE INSERT ON sessions
+WHEN NEW.status <> 'in_progress'
+BEGIN
+  SELECT RAISE(ABORT, 'sessions must begin in progress');
+END;
+
+CREATE TRIGGER sessions_reject_completion_reversal
+BEFORE UPDATE OF status ON sessions
+WHEN OLD.status = 'completed' AND NEW.status <> 'completed'
+BEGIN
+  SELECT RAISE(ABORT, 'protocol completion is irreversible');
+END;
+
+CREATE TRIGGER sessions_validate_protocol_completion
+BEFORE UPDATE OF status ON sessions
+WHEN OLD.status = 'in_progress' AND NEW.status = 'completed'
+BEGIN
+  SELECT CASE WHEN
+    (SELECT COUNT(*) FROM testlet_submissions ts
+      WHERE ts.session_id = NEW.session_id) <> 100 OR
+    (SELECT COUNT(*) FROM responses r
+      WHERE r.session_id = NEW.session_id) <> 300 OR
+    (SELECT COUNT(*) FROM session_events e
+      WHERE e.session_id = NEW.session_id AND e.event_type = 'break_completed'
+        AND e.event_ordinal BETWEEN 1 AND 9) <> 9 OR
+    (SELECT COUNT(*)
+      FROM testlet_submissions ts
+      LEFT JOIN runtime_route_testlets rr
+        ON rr.release_id = NEW.release_id AND rr.route_id = NEW.route_id
+          AND rr.testlet_ordinal = ts.testlet_ordinal AND rr.testlet_id = ts.testlet_id
+      WHERE ts.session_id = NEW.session_id AND rr.testlet_id IS NULL) <> 0 OR
+    (SELECT COUNT(*) FROM testlet_submissions ts
+      WHERE ts.session_id = NEW.session_id AND ts.option_layout_id <> NEW.option_layout_id) <> 0
+  THEN RAISE(ABORT, 'protocol completion requires the full verified response and break record') END;
+END;
+
+CREATE TRIGGER sessions_record_completion
+AFTER UPDATE OF status ON sessions
+WHEN OLD.status = 'in_progress' AND NEW.status = 'completed'
+BEGIN
+  INSERT INTO protocol_completion_ledger (release_id, l1, allocation_index)
+  VALUES (NEW.release_id, NEW.l1, NEW.allocation_index);
+END;
+
+CREATE TRIGGER protocol_completion_ledger_require_verified_session
+BEFORE INSERT ON protocol_completion_ledger
+WHEN NOT EXISTS (
+  SELECT 1 FROM sessions s
+  WHERE s.release_id = NEW.release_id AND s.l1 = NEW.l1
+    AND s.allocation_index = NEW.allocation_index AND s.status = 'completed'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'protocol completion ledger requires a verified completed session');
+END;
+
+CREATE TRIGGER allocation_start_ledger_reject_update
+BEFORE UPDATE ON allocation_start_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'allocation start ledger is append-only');
+END;
+
+CREATE TRIGGER allocation_start_ledger_reject_delete
+BEFORE DELETE ON allocation_start_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'allocation start ledger is append-only');
+END;
+
+CREATE TRIGGER protocol_completion_ledger_reject_update
+BEFORE UPDATE ON protocol_completion_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'protocol completion ledger is append-only');
+END;
+
+CREATE TRIGGER protocol_completion_ledger_reject_delete
+BEFORE DELETE ON protocol_completion_ledger
+BEGIN
+  SELECT RAISE(ABORT, 'protocol completion ledger is append-only');
+END;
+
 -- Validate each stored choice against the frozen testlet, canonical item row,
 -- session layout, and displayed option position. This independently checks the
 -- Worker-computed position at the D1 boundary.
@@ -596,8 +744,20 @@ BEGIN
   SELECT RAISE(ABORT, 'testlet submissions are append-only');
 END;
 
+CREATE TRIGGER testlet_submissions_reject_delete
+BEFORE DELETE ON testlet_submissions
+BEGIN
+  SELECT RAISE(ABORT, 'testlet submissions are append-only');
+END;
+
 CREATE TRIGGER responses_reject_update
 BEFORE UPDATE ON responses
+BEGIN
+  SELECT RAISE(ABORT, 'responses are append-only');
+END;
+
+CREATE TRIGGER responses_reject_delete
+BEFORE DELETE ON responses
 BEGIN
   SELECT RAISE(ABORT, 'responses are append-only');
 END;
@@ -606,4 +766,16 @@ CREATE TRIGGER session_events_reject_update
 BEFORE UPDATE ON session_events
 BEGIN
   SELECT RAISE(ABORT, 'session events are append-only');
+END;
+
+CREATE TRIGGER session_events_reject_delete
+BEFORE DELETE ON session_events
+BEGIN
+  SELECT RAISE(ABORT, 'session events are append-only');
+END;
+
+CREATE TRIGGER sessions_reject_delete
+BEFORE DELETE ON sessions
+BEGIN
+  SELECT RAISE(ABORT, 'sessions require an approved withdrawal-redaction migration');
 END;

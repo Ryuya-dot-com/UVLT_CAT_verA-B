@@ -6,7 +6,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   OPTION_LAYOUT_ALGORITHM,
-  RANDOMIZATION_ALGORITHM
+  RANDOMIZATION_ALGORITHM,
+  validateRecruitmentPolicy
 } from "./randomization-design.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -60,8 +61,9 @@ function assertCanonicalIsoDateTime(value, label) {
 export function buildActivationSql(release) {
   assert(release && typeof release === "object" && !Array.isArray(release),
     "Release config must be an object");
-  assert(release.schemaVersion === "uvlt-fixed-ab-field-release-config-5",
+  assert(release.schemaVersion === "uvlt-fixed-ab-field-release-config-6",
     "Release config schema is unsupported");
+  validateRecruitmentPolicy(release.recruitmentPolicy);
   assert(release.active === true,
     "Activation SQL requires a finalized release config with active=true");
   assert(typeof release.releaseId === "string" &&

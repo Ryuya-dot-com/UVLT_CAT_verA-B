@@ -176,6 +176,7 @@ test("default artifact covers all 15 scenarios without sensitive material", () =
   assert.match(csv, /exact_probability_at_least_300_per_l1/u);
   assert.match(csv, /exact_shortfall_probability_per_l1/u);
   assert.match(csv, /exact_probability_all_60_cells_have_at_least_5_completers/u);
-  assert.match(markdown, /inform, but do not determine/u);
-  assert.match(markdown, /pilot-estimated overall and differential attrition/u);
+  assert.match(markdown, /supported the adopted target of 300 protocol completers/u);
+  assert.match(markdown, /do not validate target-triggered sequential stopping/u);
+  assert.match(markdown, /pilot-informed model of arrival times/u);
 });

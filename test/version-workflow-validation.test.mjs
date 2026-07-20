@@ -207,12 +207,20 @@ test("deployment status accepts only the frozen version at exactly 100 percent",
 
 test("release handoff identity permits only documented lifecycle changes", () => {
   const before = {
-    schemaVersion: "uvlt-fixed-ab-field-release-config-5",
+    schemaVersion: "uvlt-fixed-ab-field-release-config-6",
     releaseId,
     appVersion: "0.1.0-dev",
     workerVersionId: null,
     frozenAt: null,
     active: false,
+    recruitmentPolicy: {
+      targetProtocolCompletersPerL1: 300,
+      hardCapStartsPerL1: 420,
+      stopNewAllocationsAtTarget: true,
+      retainServerCommittedPartialResponses: true,
+      protocolCompletionDefinition: "d1-completed-after-100-testlets-300-responses-9-breaks-v1",
+      partialResponseRetentionDefinition: "consented-nonwithdrawn-server-committed-complete-testlets-v1"
+    },
     expectedHashes: { bankPayloadSha256: "1".repeat(64) },
     approvals: {
       contentOwnerApprovalRecorded: true,
@@ -233,6 +241,10 @@ test("release handoff identity permits only documented lifecycle changes", () =>
 
   after.expectedHashes.bankPayloadSha256 = "2".repeat(64);
   assert.notEqual(releaseHandoffIdentitySha256(before), releaseHandoffIdentitySha256(after));
+
+  const changedPolicy = structuredClone(before);
+  changedPolicy.recruitmentPolicy.hardCapStartsPerL1 = 421;
+  assert.notEqual(releaseHandoffIdentitySha256(before), releaseHandoffIdentitySha256(changedPolicy));
 });
 
 test("remote Worker creation time is required and normalized from version metadata", () => {

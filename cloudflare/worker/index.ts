@@ -6,10 +6,15 @@ const TOTAL_RESPONSES = 300;
 const TOTAL_BREAKS = 9;
 const ROUTE_COUNT = 10;
 const L1_COUNT = 2;
-const ALLOCATIONS_PER_L1 = 300;
+const TARGET_PROTOCOL_COMPLETERS_PER_L1 = 300;
+const HARD_CAP_STARTS_PER_L1 = 420;
 const RANDOMIZATION_BLOCK_SIZE = 10;
-const RANDOMIZATION_BLOCKS_PER_L1 = ALLOCATIONS_PER_L1 / RANDOMIZATION_BLOCK_SIZE;
+const RANDOMIZATION_BLOCKS_PER_L1 = HARD_CAP_STARTS_PER_L1 / RANDOMIZATION_BLOCK_SIZE;
 const OPTION_LAYOUT_COUNT = 6;
+const PROTOCOL_COMPLETION_DEFINITION =
+  "d1-completed-after-100-testlets-300-responses-9-breaks-v1";
+const PARTIAL_RESPONSE_RETENTION_DEFINITION =
+  "consented-nonwithdrawn-server-committed-complete-testlets-v1";
 const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
 const OPTION_LAYOUT_ALGORITHM = "even-order-williams-square-6-canonical-first-v1";
 const RUNTIME_BANK_PROJECTION_SCHEMA = "uvlt-d1-runtime-bank-projection-1";
@@ -180,6 +185,12 @@ interface ReleaseReadinessRow {
   participant_hmac_key_fingerprint: string | null;
   prolific_completion_code_fingerprint: string | null;
   prolific_completion_action: ProlificCompletionAction | null;
+  target_protocol_completers_per_l1: number;
+  hard_cap_starts_per_l1: number;
+  stop_new_allocations_at_target: number;
+  retain_server_committed_partial_responses: number;
+  protocol_completion_definition: string;
+  partial_response_retention_definition: string;
   active: number;
   frozen_at: string | null;
   expected_testlets: number;
@@ -642,6 +653,12 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
       r.participant_hmac_key_fingerprint,
       r.prolific_completion_code_fingerprint,
       r.prolific_completion_action,
+      r.target_protocol_completers_per_l1,
+      r.hard_cap_starts_per_l1,
+      r.stop_new_allocations_at_target,
+      r.retain_server_committed_partial_responses,
+      r.protocol_completion_definition,
+      r.partial_response_retention_definition,
       r.active,
       r.frozen_at,
       r.expected_testlets,
@@ -683,6 +700,12 @@ function releaseIdentityMatches(
     row.participant_hmac_key_fingerprint === expectedIdentity.participantHmacKeyFingerprint &&
     row.prolific_completion_code_fingerprint === expectedIdentity.prolificCompletionCodeFingerprint &&
     row.prolific_completion_action === expectedIdentity.prolificCompletionAction &&
+    row.target_protocol_completers_per_l1 === TARGET_PROTOCOL_COMPLETERS_PER_L1 &&
+    row.hard_cap_starts_per_l1 === HARD_CAP_STARTS_PER_L1 &&
+    row.stop_new_allocations_at_target === 1 &&
+    row.retain_server_committed_partial_responses === 1 &&
+    row.protocol_completion_definition === PROTOCOL_COMPLETION_DEFINITION &&
+    row.partial_response_retention_definition === PARTIAL_RESPONSE_RETENTION_DEFINITION &&
     actualHmacKeyFingerprint === expectedIdentity.participantHmacKeyFingerprint &&
     actualCompletionCodeFingerprint === expectedIdentity.prolificCompletionCodeFingerprint &&
     publicBuild !== null && publicBuild.appVersion === expectedIdentity.appVersion &&
@@ -869,7 +892,7 @@ async function allocationScheduleRowsMatch(
     WHERE release_id = ?
     ORDER BY CASE l1 WHEN 'ja' THEN 0 WHEN 'vi' THEN 1 ELSE 2 END, allocation_index
   `).bind(expectedIdentity.releaseId).all<AllocationSlotRow>();
-  if (result.results.length !== L1_COUNT * ALLOCATIONS_PER_L1 ||
+  if (result.results.length !== L1_COUNT * HARD_CAP_STARTS_PER_L1 ||
       !SHA256_FINGERPRINT_PATTERN.test(row.randomization_seed_fingerprint ?? "")) {
     return false;
   }
@@ -883,8 +906,8 @@ async function allocationScheduleRowsMatch(
   const macroRouteLayouts = new Map<string, number>();
   for (let index = 0; index < result.results.length; index += 1) {
     const slot = result.results[index];
-    const expectedL1: "ja" | "vi" = index < ALLOCATIONS_PER_L1 ? "ja" : "vi";
-    const localIndex = index % ALLOCATIONS_PER_L1;
+    const expectedL1: "ja" | "vi" = index < HARD_CAP_STARTS_PER_L1 ? "ja" : "vi";
+    const localIndex = index % HARD_CAP_STARTS_PER_L1;
     const expectedBlock = Math.floor(localIndex / RANDOMIZATION_BLOCK_SIZE);
     const expectedPosition = localIndex % RANDOMIZATION_BLOCK_SIZE;
     if (slot.l1 !== expectedL1 || slot.allocation_index !== localIndex ||
@@ -915,20 +938,27 @@ async function allocationScheduleRowsMatch(
       blockLayouts.size !== L1_COUNT * RANDOMIZATION_BLOCKS_PER_L1 * OPTION_LAYOUT_COUNT ||
       [...blockLayouts.values()].some((count) => count !== 1 && count !== 2) ||
       !exactCountMap(routesByL1, L1_COUNT * ROUTE_COUNT, RANDOMIZATION_BLOCKS_PER_L1) ||
-      !exactCountMap(layoutsByL1, L1_COUNT * OPTION_LAYOUT_COUNT, ALLOCATIONS_PER_L1 / OPTION_LAYOUT_COUNT) ||
-      !exactCountMap(routeLayoutsByL1, L1_COUNT * ROUTE_COUNT * OPTION_LAYOUT_COUNT, 5) ||
-      !exactCountMap(macroRouteLayouts, L1_COUNT * 5 * ROUTE_COUNT * OPTION_LAYOUT_COUNT, 1)) {
+      !exactCountMap(layoutsByL1, L1_COUNT * OPTION_LAYOUT_COUNT, HARD_CAP_STARTS_PER_L1 / OPTION_LAYOUT_COUNT) ||
+      !exactCountMap(routeLayoutsByL1, L1_COUNT * ROUTE_COUNT * OPTION_LAYOUT_COUNT, 7) ||
+      !exactCountMap(macroRouteLayouts, L1_COUNT * 7 * ROUTE_COUNT * OPTION_LAYOUT_COUNT, 1)) {
     return false;
   }
 
   const reconstructedSchedule = {
-    schemaVersion: "uvlt-fixed-ab-randomization-schedule-1",
+    schemaVersion: "uvlt-fixed-ab-randomization-schedule-2",
     releaseId: expectedIdentity.releaseId,
     algorithm: RANDOMIZATION_ALGORITHM,
     optionLayoutAlgorithm: OPTION_LAYOUT_ALGORITHM,
     seedFingerprint: row.randomization_seed_fingerprint,
     routesPayloadSha256: row.routes_sha256,
-    nominalSlotsPerL1: ALLOCATIONS_PER_L1,
+    recruitmentPolicy: {
+      targetProtocolCompletersPerL1: TARGET_PROTOCOL_COMPLETERS_PER_L1,
+      hardCapStartsPerL1: HARD_CAP_STARTS_PER_L1,
+      stopNewAllocationsAtTarget: true,
+      retainServerCommittedPartialResponses: true,
+      protocolCompletionDefinition: PROTOCOL_COMPLETION_DEFINITION,
+      partialResponseRetentionDefinition: PARTIAL_RESPONSE_RETENTION_DEFINITION
+    },
     blockSize: RANDOMIZATION_BLOCK_SIZE,
     blocksPerL1: RANDOMIZATION_BLOCKS_PER_L1,
     macroreplicatesPerL1: RANDOMIZATION_BLOCKS_PER_L1 / OPTION_LAYOUT_COUNT,
@@ -972,7 +1002,13 @@ function runtimeVerificationKey(
     prolificCompletionCodeFingerprint: expectedIdentity.prolificCompletionCodeFingerprint,
     randomizationAlgorithm: row.randomization_algorithm,
     optionLayoutAlgorithm: row.option_layout_algorithm,
-    prolificCompletionAction: expectedIdentity.prolificCompletionAction
+    prolificCompletionAction: expectedIdentity.prolificCompletionAction,
+    targetProtocolCompletersPerL1: row.target_protocol_completers_per_l1,
+    hardCapStartsPerL1: row.hard_cap_starts_per_l1,
+    stopNewAllocationsAtTarget: row.stop_new_allocations_at_target,
+    retainServerCommittedPartialResponses: row.retain_server_committed_partial_responses,
+    protocolCompletionDefinition: row.protocol_completion_definition,
+    partialResponseRetentionDefinition: row.partial_response_retention_definition
   });
 }
 
@@ -1096,6 +1132,7 @@ async function validateProlificStudyConfiguration(env: Env, studyId: string): Pr
     : [];
   const action = actions[0];
   if (nestedApiId(study.id) !== studyId || study.prolific_id_option !== "url_parameters" ||
+      study.total_available_places !== TARGET_PROTOCOL_COMPLETERS_PER_L1 ||
       study.is_ready_to_publish !== true || completedCodes.length !== 1 ||
       !isPlainObject(completedCode) || completedCode.code !== env.PROLIFIC_COMPLETION_CODE ||
       actions.length !== 1 || !isPlainObject(action) || Object.keys(action).length !== 1 ||
@@ -1224,7 +1261,11 @@ async function rotateSessionToken(
 const ALLOCATE_SESSION_SQL = `
   WITH next_allocation AS (
     SELECT COALESCE(MAX(allocation_index) + 1, 0) AS allocation_index
-    FROM sessions
+    FROM allocation_start_ledger
+    WHERE release_id = ? AND l1 = ?
+  ), completion_count AS (
+    SELECT COUNT(*) AS protocol_completers
+    FROM protocol_completion_ledger
     WHERE release_id = ? AND l1 = ?
   ), assigned_slot AS (
     SELECT
@@ -1232,8 +1273,10 @@ const ALLOCATE_SESSION_SQL = `
       slot.randomization_block,
       slot.block_position,
       slot.route_id,
-      slot.option_layout_id
+      slot.option_layout_id,
+      completion.protocol_completers
     FROM next_allocation next
+    CROSS JOIN completion_count completion
     JOIN runtime_allocation_slots slot
       ON slot.release_id = ? AND slot.l1 = ? AND slot.allocation_index = next.allocation_index
   )
@@ -1247,7 +1290,8 @@ const ALLOCATE_SESSION_SQL = `
     ?, ?, ?, ?, ?, ?, allocation_index, randomization_block, block_position, route_id, option_layout_id,
     ?, ?, 'in_progress', 0, 0, 0, 0, ?, ?
   FROM assigned_slot
-  WHERE allocation_index BETWEEN 0 AND 299
+  WHERE allocation_index BETWEEN 0 AND ${HARD_CAP_STARTS_PER_L1 - 1}
+    AND protocol_completers < ${TARGET_PROTOCOL_COMPLETERS_PER_L1}
   RETURNING
     session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
     allocation_index, randomization_block, block_position, route_id, option_layout_id,
@@ -1291,6 +1335,7 @@ async function createOrResumeSession(
         env.DB.prepare(ALLOCATE_SESSION_SQL).bind(
           study.release_id, study.l1,
           study.release_id, study.l1,
+          study.release_id, study.l1,
           sessionId, study.release_id, study.study_id, study.l1, links.participant, links.submission,
           tokenHash, tokenExpiresAt, now, now
         ),
@@ -1300,7 +1345,18 @@ async function createOrResumeSession(
         `).bind(crypto.randomUUID(), startPayloadHash, now, sessionId)
       ]);
       const allocated = results[0].results[0] as SessionRow | undefined;
-      if (!allocated) httpError(409, "STUDY_CAPACITY_REACHED", "This study stratum has reached its planned capacity.");
+      if (!allocated) {
+        const recruitment = await env.DB.prepare(`
+          SELECT
+            (SELECT COUNT(*) FROM allocation_start_ledger WHERE release_id = ? AND l1 = ?) AS starts,
+            (SELECT COUNT(*) FROM protocol_completion_ledger WHERE release_id = ? AND l1 = ?) AS protocol_completers
+        `).bind(study.release_id, study.l1, study.release_id, study.l1)
+          .first<{ starts: number; protocol_completers: number }>();
+        if ((recruitment?.protocol_completers ?? 0) >= TARGET_PROTOCOL_COMPLETERS_PER_L1) {
+          httpError(409, "PROTOCOL_COMPLETION_TARGET_REACHED", "This study stratum has reached its protocol-completer target.");
+        }
+        httpError(409, "STUDY_CAPACITY_REACHED", "This study stratum has reached its start hard cap.");
+      }
       return { session: allocated, rawToken, resumed: false };
     } catch (error) {
       if (error instanceof PublicHttpError) throw error;
@@ -1339,7 +1395,7 @@ async function authenticateSession(request: Request, env: Env): Promise<SessionR
 function assertSessionCounters(session: SessionRow): void {
   if (!Number.isInteger(session.next_testlet_ordinal) || !Number.isInteger(session.completed_testlets) ||
       !Number.isInteger(session.response_count) || !Number.isInteger(session.breaks_completed) ||
-      !Number.isInteger(session.allocation_index) || session.allocation_index < 0 || session.allocation_index >= ALLOCATIONS_PER_L1 ||
+      !Number.isInteger(session.allocation_index) || session.allocation_index < 0 || session.allocation_index >= HARD_CAP_STARTS_PER_L1 ||
       !Number.isInteger(session.randomization_block) ||
       session.randomization_block !== Math.floor(session.allocation_index / RANDOMIZATION_BLOCK_SIZE) ||
       !Number.isInteger(session.block_position) ||
@@ -1596,6 +1652,12 @@ async function handleConfig(env: Env): Promise<Response> {
     total_testlets: TOTAL_TESTLETS,
     total_item_responses: TOTAL_RESPONSES,
     required_breaks: TOTAL_BREAKS,
+    target_protocol_completers_per_l1: TARGET_PROTOCOL_COMPLETERS_PER_L1,
+    hard_cap_starts_per_l1: HARD_CAP_STARTS_PER_L1,
+    stop_new_allocations_at_target: true,
+    retain_server_committed_partial_responses: true,
+    protocol_completion_definition: PROTOCOL_COMPLETION_DEFINITION,
+    partial_response_retention_definition: PARTIAL_RESPONSE_RETENTION_DEFINITION,
     practice_enabled: false,
     prolific_entry_path: "/join"
   });
@@ -1853,6 +1915,19 @@ function forbiddenAssetPath(pathname: string): boolean {
 
 async function handleStatic(request: Request, env: Env, url: URL): Promise<Response> {
   if (!["GET", "HEAD"].includes(request.method)) return methodNotAllowed("GET, HEAD");
+  if (url.pathname === "/recruitment-closed" || url.pathname === "/recruitment-closed/") {
+    if (url.pathname !== "/recruitment-closed" || url.search !== "") {
+      return redirectResponse("/recruitment-closed");
+    }
+    const indexUrl = new URL(request.url);
+    indexUrl.pathname = "/index.html";
+    indexUrl.search = "";
+    const assetResponse = await env.ASSETS.fetch(new Request(indexUrl, {
+      method: request.method,
+      headers: request.headers
+    }));
+    return applySecurityHeaders(assetResponse, true);
+  }
   if (hasRawProlificQuery(url)) {
     const canonical = exactProlificQueryForCanonicalRedirect(url);
     return redirectResponse(canonical ?? "/");
@@ -1901,7 +1976,7 @@ async function dispatch(request: Request, env: Env): Promise<Response> {
 
 function routeLabel(pathname: string): string {
   const known = new Set([
-    "/join", "/api/config", "/api/session/state",
+    "/join", "/recruitment-closed", "/api/config", "/api/session/state",
     "/api/session/testlet-response", "/api/session/break-complete", "/api/session/complete"
   ]);
   if (known.has(pathname)) return pathname;
@@ -1927,7 +2002,9 @@ export default {
         errorCode = error.code;
         if (pathname === "/join") {
           status = 303;
-          return redirectResponse("/");
+          const closedByPolicy = error.code === "PROTOCOL_COMPLETION_TARGET_REACHED" ||
+            error.code === "STUDY_CAPACITY_REACHED";
+          return redirectResponse(closedByPolicy ? "/recruitment-closed" : "/");
         }
         return errorResponse(error);
       }

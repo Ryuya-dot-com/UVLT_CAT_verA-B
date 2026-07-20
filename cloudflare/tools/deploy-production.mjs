@@ -14,6 +14,7 @@ import {
   releaseHandoffIdentitySha256,
   workerUploadInputsSha256
 } from "./worker-upload-inputs.mjs";
+import { validateRecruitmentPolicy } from "./randomization-design.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -91,7 +92,8 @@ try {
   throw new Error(`Current Worker upload inputs could not be frozen: ${error instanceof Error ? error.message : "unknown error"}`);
 }
 
-assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-5", "Private release config schema is unsupported");
+assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Private release config schema is unsupported");
+validateRecruitmentPolicy(release.recruitmentPolicy);
 assert(release.active === true, "Private release config must be active before deployment");
 assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
 assert(release.appVersion === packageMetadata?.version, "Private release appVersion must exactly match package.json version");

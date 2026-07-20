@@ -9,12 +9,17 @@ export const ROUTE_IDS = Object.freeze(
   Array.from({ length: 10 }, (_value, index) => `R${String(index + 1).padStart(2, "0")}`)
 );
 
-const SCHEDULE_SCHEMA_VERSION = "uvlt-fixed-ab-randomization-schedule-1";
-const AUDIT_SCHEMA_VERSION = "uvlt-fixed-ab-randomization-balance-audit-1";
-const NOMINAL_SLOTS_PER_L1 = 300;
+const SCHEDULE_SCHEMA_VERSION = "uvlt-fixed-ab-randomization-schedule-2";
+const AUDIT_SCHEMA_VERSION = "uvlt-fixed-ab-randomization-balance-audit-2";
+export const TARGET_PROTOCOL_COMPLETERS_PER_L1 = 300;
+export const HARD_CAP_STARTS_PER_L1 = 420;
+export const PROTOCOL_COMPLETION_DEFINITION =
+  "d1-completed-after-100-testlets-300-responses-9-breaks-v1";
+export const PARTIAL_RESPONSE_RETENTION_DEFINITION =
+  "consented-nonwithdrawn-server-committed-complete-testlets-v1";
 const BLOCK_SIZE = 10;
-const BLOCKS_PER_L1 = 30;
-const MACROREPLICATES_PER_L1 = 5;
+const BLOCKS_PER_L1 = 42;
+const MACROREPLICATES_PER_L1 = 7;
 const BLOCKS_PER_MACROREPLICATE = 6;
 const OPTION_LAYOUT_COUNT = 6;
 const UINT32_RANGE = 0x1_0000_0000;
@@ -59,6 +64,38 @@ function assertSeed(seed) {
   assert(typeof seed === "string", "UVLT randomization seed must be a string");
   assert(Buffer.byteLength(seed, "utf8") >= 32,
     "UVLT randomization seed must contain at least 32 UTF-8 bytes");
+}
+
+export function validateRecruitmentPolicy(policy) {
+  assertExactKeys(policy, [
+    "targetProtocolCompletersPerL1", "hardCapStartsPerL1",
+    "stopNewAllocationsAtTarget", "retainServerCommittedPartialResponses",
+    "protocolCompletionDefinition", "partialResponseRetentionDefinition"
+  ], "Recruitment policy");
+  assert(policy.targetProtocolCompletersPerL1 === TARGET_PROTOCOL_COMPLETERS_PER_L1,
+    "Recruitment policy must target 300 protocol completers per L1");
+  assert(policy.hardCapStartsPerL1 === HARD_CAP_STARTS_PER_L1,
+    "Recruitment policy must cap starts at 420 per L1");
+  assert(policy.stopNewAllocationsAtTarget === true,
+    "Recruitment policy must stop new allocations at the completer target");
+  assert(policy.retainServerCommittedPartialResponses === true,
+    "Recruitment policy must retain server-committed partial responses");
+  assert(policy.protocolCompletionDefinition === PROTOCOL_COMPLETION_DEFINITION,
+    "Recruitment policy has an unsupported protocol-completion definition");
+  assert(policy.partialResponseRetentionDefinition === PARTIAL_RESPONSE_RETENTION_DEFINITION,
+    "Recruitment policy has an unsupported partial-response retention definition");
+  return Object.freeze({ ...policy });
+}
+
+export function recruitmentPolicy() {
+  return Object.freeze({
+    targetProtocolCompletersPerL1: TARGET_PROTOCOL_COMPLETERS_PER_L1,
+    hardCapStartsPerL1: HARD_CAP_STARTS_PER_L1,
+    stopNewAllocationsAtTarget: true,
+    retainServerCommittedPartialResponses: true,
+    protocolCompletionDefinition: PROTOCOL_COMPLETION_DEFINITION,
+    partialResponseRetentionDefinition: PARTIAL_RESPONSE_RETENTION_DEFINITION
+  });
 }
 
 export function stableStringify(value) {
@@ -286,7 +323,7 @@ export function generateAllocationSchedule({ seed, releaseId, routesPayloadSha25
     optionLayoutAlgorithm: OPTION_LAYOUT_ALGORITHM,
     seedFingerprint: seedFingerprint(seed),
     routesPayloadSha256,
-    nominalSlotsPerL1: NOMINAL_SLOTS_PER_L1,
+    recruitmentPolicy: recruitmentPolicy(),
     blockSize: BLOCK_SIZE,
     blocksPerL1: BLOCKS_PER_L1,
     macroreplicatesPerL1: MACROREPLICATES_PER_L1,
@@ -307,7 +344,7 @@ export function validateAllocationSchedule(schedule, expected = {}) {
   assertPlainObject(expected, "Expected schedule identity");
   assertExactKeys(schedule, [
     "schemaVersion", "releaseId", "algorithm", "optionLayoutAlgorithm",
-    "seedFingerprint", "routesPayloadSha256", "nominalSlotsPerL1", "blockSize",
+    "seedFingerprint", "routesPayloadSha256", "recruitmentPolicy", "blockSize",
     "blocksPerL1", "macroreplicatesPerL1", "blocksPerMacroreplicate",
     "optionLayouts", "slots", "integrity"
   ], "Randomization schedule");
@@ -327,23 +364,22 @@ export function validateAllocationSchedule(schedule, expected = {}) {
     assert(schedule.routesPayloadSha256 === expected.routesPayloadSha256,
       "Schedule routesPayloadSha256 does not match the expected route artifact");
   }
-  assert(schedule.nominalSlotsPerL1 === NOMINAL_SLOTS_PER_L1,
-    "Schedule must contain 300 nominal slots per L1");
+  validateRecruitmentPolicy(schedule.recruitmentPolicy);
   assert(schedule.blockSize === BLOCK_SIZE, "Schedule block size must be 10");
-  assert(schedule.blocksPerL1 === BLOCKS_PER_L1, "Schedule must contain 30 blocks per L1");
+  assert(schedule.blocksPerL1 === BLOCKS_PER_L1, "Schedule must contain 42 blocks per L1");
   assert(schedule.macroreplicatesPerL1 === MACROREPLICATES_PER_L1,
-    "Schedule must contain five macroreplicates per L1");
+    "Schedule must contain seven macroreplicates per L1");
   assert(schedule.blocksPerMacroreplicate === BLOCKS_PER_MACROREPLICATE,
     "Schedule must contain six blocks per macroreplicate");
   const optionLayoutSummary = validateOptionLayouts(schedule.optionLayouts);
   assert(Array.isArray(schedule.slots) &&
-    schedule.slots.length === L1_STRATA.length * NOMINAL_SLOTS_PER_L1,
-  "Schedule must contain 600 allocation slots");
+    schedule.slots.length === L1_STRATA.length * HARD_CAP_STARTS_PER_L1,
+  "Schedule must contain 840 allocation slots");
 
   const l1Summaries = [];
   L1_STRATA.forEach((l1, l1Index) => {
-    const start = l1Index * NOMINAL_SLOTS_PER_L1;
-    const stratumSlots = schedule.slots.slice(start, start + NOMINAL_SLOTS_PER_L1);
+    const start = l1Index * HARD_CAP_STARTS_PER_L1;
+    const stratumSlots = schedule.slots.slice(start, start + HARD_CAP_STARTS_PER_L1);
     const routeCounts = new Map();
     const layoutCounts = new Map();
     const routeLayoutCounts = new Map();
@@ -393,24 +429,24 @@ export function validateAllocationSchedule(schedule, expected = {}) {
         `${l1} block ${blockIndex} option layouts must occur once or twice`);
     }
 
-    assert(routeCounts.size === 10 && [...routeCounts.values()].every(count => count === 30),
-      `${l1} routes must each occur 30 times`);
-    assert(layoutCounts.size === 6 && [...layoutCounts.values()].every(count => count === 50),
-      `${l1} option layouts must each occur 50 times`);
-    assert(routeLayoutCounts.size === 60 && [...routeLayoutCounts.values()].every(count => count === 5),
-      `${l1} route-by-option-layout cells must each occur five times`);
-    assert(macroRouteLayoutCounts.size === 300 &&
+    assert(routeCounts.size === 10 && [...routeCounts.values()].every(count => count === 42),
+      `${l1} routes must each occur 42 times`);
+    assert(layoutCounts.size === 6 && [...layoutCounts.values()].every(count => count === 70),
+      `${l1} option layouts must each occur 70 times`);
+    assert(routeLayoutCounts.size === 60 && [...routeLayoutCounts.values()].every(count => count === 7),
+      `${l1} route-by-option-layout cells must each occur seven times`);
+    assert(macroRouteLayoutCounts.size === 420 &&
       [...macroRouteLayoutCounts.values()].every(count => count === 1),
     `${l1} must completely cross route and option layout once in every macroreplicate`);
 
     l1Summaries.push(Object.freeze({
       l1,
-      slots: NOMINAL_SLOTS_PER_L1,
+      slots: HARD_CAP_STARTS_PER_L1,
       blocks: BLOCKS_PER_L1,
-      participantsPerRoute: 30,
-      participantsPerOptionLayout: 50,
+      startsPerRoute: 42,
+      startsPerOptionLayout: 70,
       routeOptionLayoutCells: 60,
-      replicationsPerRouteOptionLayoutCell: 5,
+      replicationsPerRouteOptionLayoutCell: 7,
       macroreplicates: MACROREPLICATES_PER_L1,
       routeOptionLayoutCellsPerMacroreplicate: 60,
       replicationsPerCellWithinMacroreplicate: 1,
@@ -546,7 +582,7 @@ export function buildBalanceAudit({ schedule, routes }) {
     "Schedule is not bound to the audited route artifact");
   const safePerL1 = allocation.perL1.map(({ slots, ...summary }) => ({
     ...summary,
-    nominalAllocations: slots
+    hardCapAllocations: slots
   }));
   const audit = {
     schemaVersion: AUDIT_SCHEMA_VERSION,
@@ -558,7 +594,7 @@ export function buildBalanceAudit({ schedule, routes }) {
     routesPayloadSha256: schedule.routesPayloadSha256,
     design: {
       l1Strata: [...L1_STRATA],
-      nominalSlotsPerL1: NOMINAL_SLOTS_PER_L1,
+      recruitmentPolicy: recruitmentPolicy(),
       blockSize: BLOCK_SIZE,
       blocksPerL1: BLOCKS_PER_L1,
       macroreplicatesPerL1: MACROREPLICATES_PER_L1,
@@ -568,7 +604,7 @@ export function buildBalanceAudit({ schedule, routes }) {
     },
     allocationBalance: {
       passed: allocation.passed,
-      totalNominalAllocations: allocation.totalSlots,
+      totalHardCapAllocations: allocation.totalSlots,
       perL1: safePerL1
     },
     optionLayoutBalance: { ...allocation.optionLayouts },

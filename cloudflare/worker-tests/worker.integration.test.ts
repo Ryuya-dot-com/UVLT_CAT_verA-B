@@ -26,10 +26,14 @@ const BANK_SHA256 = "2".repeat(64);
 const ROUTES_SHA256 = "3".repeat(64);
 let RUNTIME_BANK_PROJECTION_SHA256 = "0".repeat(64);
 let RUNTIME_ROUTES_PROJECTION_SHA256 = "0".repeat(64);
-const ALLOCATION_SCHEDULE_SHA256 = "de02d7a732893d96108579fb8b80569b4b22bfc932c0a910512fd549de964063";
+let ALLOCATION_SCHEDULE_SHA256 = "0".repeat(64);
 const RANDOMIZATION_SEED_FINGERPRINT = `sha256:${"4".repeat(64)}`;
 const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
 const OPTION_LAYOUT_ALGORITHM = "even-order-williams-square-6-canonical-first-v1";
+const PROTOCOL_COMPLETION_DEFINITION =
+  "d1-completed-after-100-testlets-300-responses-9-breaks-v1";
+const PARTIAL_RESPONSE_RETENTION_DEFINITION =
+  "consented-nonwithdrawn-server-committed-complete-testlets-v1";
 const PARTICIPANT_HMAC_KEY_FINGERPRINT = "sha256:9df491e6b93f01674bba2b1840d9dbb6c14d847921709325d8405982ef5d42dc";
 const COMPLETION_CODE_FINGERPRINT = "sha256:e02731629394086455f97e58d6c865f78f10dea4436f6ca51950ec7911519ef9";
 const HEX_64 = /^[0-9a-f]{64}$/;
@@ -63,6 +67,12 @@ function assetBinding(manifest = PUBLIC_BUILD_MANIFEST): { fetch(input: RequestI
         : input instanceof URL
           ? input
           : new URL(input.url);
+      if (target.pathname === "/index.html") {
+        return new Response("<!doctype html><title>Synthetic field shell</title>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" }
+        });
+      }
       if (target.pathname !== "/build-manifest.json") return new Response(null, { status: 404 });
       return new Response(manifest, {
         status: 200,
@@ -116,6 +126,61 @@ async function runInBatches(statements: D1PreparedStatement[], batchSize = 50): 
   }
 }
 
+async function insertSyntheticProtocolCompleters(
+  l1: "ja" | "vi",
+  firstAllocationIndex: number,
+  count: number
+): Promise<void> {
+  // Fabricate the state left after a reviewed redaction removed the verified
+  // completed sessions. Production inserts cannot bypass these two triggers;
+  // the fixture restores them before exercising the Worker.
+  await bindings.DB.batch([
+    bindings.DB.prepare("DROP TRIGGER allocation_start_ledger_require_session"),
+    bindings.DB.prepare("DROP TRIGGER protocol_completion_ledger_require_verified_session")
+  ]);
+  const statements: D1PreparedStatement[] = [];
+  for (let offset = 0; offset < count; offset += 1) {
+    const allocationIndex = firstAllocationIndex + offset;
+    // Model previously verified completers after participant-linked rows have
+    // been removed by the separately reviewed redaction procedure.
+    statements.push(bindings.DB.prepare(`
+      INSERT INTO allocation_start_ledger (release_id, l1, allocation_index)
+      VALUES (?, ?, ?)
+    `).bind(RELEASE_ID, l1, allocationIndex));
+    statements.push(bindings.DB.prepare(`
+      INSERT INTO protocol_completion_ledger (release_id, l1, allocation_index)
+      VALUES (?, ?, ?)
+    `).bind(RELEASE_ID, l1, allocationIndex));
+  }
+  await runInBatches(statements);
+  await bindings.DB.batch([
+    bindings.DB.prepare(`
+      CREATE TRIGGER allocation_start_ledger_require_session
+      BEFORE INSERT ON allocation_start_ledger
+      WHEN NOT EXISTS (
+        SELECT 1 FROM sessions s
+        WHERE s.release_id = NEW.release_id AND s.l1 = NEW.l1
+          AND s.allocation_index = NEW.allocation_index
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'allocation start ledger requires its originating session');
+      END
+    `),
+    bindings.DB.prepare(`
+      CREATE TRIGGER protocol_completion_ledger_require_verified_session
+      BEFORE INSERT ON protocol_completion_ledger
+      WHEN NOT EXISTS (
+        SELECT 1 FROM sessions s
+        WHERE s.release_id = NEW.release_id AND s.l1 = NEW.l1
+          AND s.allocation_index = NEW.allocation_index AND s.status = 'completed'
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'protocol completion ledger requires a verified completed session');
+      END
+    `)
+  ]);
+}
+
 function syntheticTestlet(ordinal: number): {
   testletId: string;
   moduleId: string;
@@ -167,6 +232,51 @@ function syntheticAllocationSlot(l1: "ja" | "vi", allocationIndex: number): {
     routeId: `R${String(routeIndex + 1).padStart(2, "0")}`,
     optionLayoutId: (routeIndex + randomizationBlock + l1LayoutOffset) % 6
   };
+}
+
+async function syntheticAllocationScheduleSha256(): Promise<string> {
+  const slots = [];
+  for (const l1 of ["ja", "vi"] as const) {
+    for (let allocationIndex = 0; allocationIndex < 420; allocationIndex += 1) {
+      const slot = syntheticAllocationSlot(l1, allocationIndex);
+      slots.push({
+        l1,
+        slotIndex: allocationIndex,
+        blockIndex: slot.randomizationBlock,
+        positionWithinBlock: slot.blockPosition - 1,
+        macroreplicateIndex: Math.floor(slot.randomizationBlock / 6),
+        blockWithinMacroreplicate: slot.randomizationBlock % 6,
+        routeId: slot.routeId,
+        optionLayoutIndex: slot.optionLayoutId
+      });
+    }
+  }
+  return sha256Hex(stableJsonForTest({
+    schemaVersion: "uvlt-fixed-ab-randomization-schedule-2",
+    releaseId: RELEASE_ID,
+    algorithm: RANDOMIZATION_ALGORITHM,
+    optionLayoutAlgorithm: OPTION_LAYOUT_ALGORITHM,
+    seedFingerprint: RANDOMIZATION_SEED_FINGERPRINT,
+    routesPayloadSha256: ROUTES_SHA256,
+    recruitmentPolicy: {
+      targetProtocolCompletersPerL1: 300,
+      hardCapStartsPerL1: 420,
+      stopNewAllocationsAtTarget: true,
+      retainServerCommittedPartialResponses: true,
+      protocolCompletionDefinition: PROTOCOL_COMPLETION_DEFINITION,
+      partialResponseRetentionDefinition: PARTIAL_RESPONSE_RETENTION_DEFINITION
+    },
+    blockSize: 10,
+    blocksPerL1: 42,
+    macroreplicatesPerL1: 7,
+    blocksPerMacroreplicate: 6,
+    optionLayouts: Array.from({ length: 6 }, (_value, optionLayoutIndex) => ({
+      optionLayoutIndex,
+      optionOrder: [...optionPermutationForLayout(optionLayoutIndex)]
+    })),
+    slots,
+    integrity: {}
+  }));
 }
 
 function evenOrderWilliamsSquareForTest(order: number): number[][] {
@@ -246,6 +356,8 @@ async function applySchema(): Promise<void> {
     bindings.DB.prepare("DROP TABLE IF EXISTS testlet_submissions"),
     bindings.DB.prepare("DROP TABLE IF EXISTS session_events"),
     bindings.DB.prepare("DROP TABLE IF EXISTS sessions"),
+    bindings.DB.prepare("DROP TABLE IF EXISTS protocol_completion_ledger"),
+    bindings.DB.prepare("DROP TABLE IF EXISTS allocation_start_ledger"),
     bindings.DB.prepare("DROP TABLE IF EXISTS runtime_allocation_slots"),
     bindings.DB.prepare("DROP TABLE IF EXISTS runtime_route_testlets"),
     bindings.DB.prepare("DROP TABLE IF EXISTS runtime_testlets"),
@@ -286,6 +398,7 @@ async function seedReadySyntheticRelease(
 ): Promise<void> {
   const now = "2026-07-20T00:00:00.000Z";
   const projectionHashes = await syntheticRuntimeProjectionHashes();
+  ALLOCATION_SCHEDULE_SHA256 = await syntheticAllocationScheduleSha256();
   RUNTIME_BANK_PROJECTION_SHA256 = projectionHashes.bank;
   RUNTIME_ROUTES_PROJECTION_SHA256 = projectionHashes.routes;
   await bindings.DB.batch([
@@ -295,8 +408,11 @@ async function seedReadySyntheticRelease(
         runtime_bank_projection_sha256, runtime_routes_projection_sha256,
         allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
+        target_protocol_completers_per_l1, hard_cap_starts_per_l1,
+        stop_new_allocations_at_target, retain_server_committed_partial_responses,
+        protocol_completion_definition, partial_response_retention_definition,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 300, 420, 1, 1, ?, ?, 100, 300, 9, 0, ?, ?)
     `).bind(
       RELEASE_ID,
       appVersion,
@@ -314,6 +430,8 @@ async function seedReadySyntheticRelease(
       participantHmacKeyFingerprint,
       completionCodeFingerprint,
       COMPLETION_ACTION,
+      PROTOCOL_COMPLETION_DEFINITION,
+      PARTIAL_RESPONSE_RETENTION_DEFINITION,
       now,
       now
     ),
@@ -393,7 +511,7 @@ async function seedReadySyntheticRelease(
 
   const allocationStatements: D1PreparedStatement[] = [];
   for (const l1 of ["ja", "vi"] as const) {
-    for (let allocationIndex = 0; allocationIndex < 300; allocationIndex += 1) {
+    for (let allocationIndex = 0; allocationIndex < 420; allocationIndex += 1) {
       const slot = syntheticAllocationSlot(l1, allocationIndex);
       const assignmentIndex = swapFirstJaAssignments && l1 === "ja" && allocationIndex < 2
         ? 1 - allocationIndex
@@ -433,11 +551,13 @@ function installProlificSubmissionMock({
   completionCode = COMPLETION_CODE,
   completionAction = COMPLETION_ACTION,
   studyReady = true,
+  totalAvailablePlaces = 300,
   studyResponseStatus = 200
 }: {
   completionCode?: string;
   completionAction?: string;
   studyReady?: boolean;
+  totalAvailablePlaces?: number;
   studyResponseStatus?: number;
 } = {}): ReturnType<typeof vi.spyOn> {
   return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -453,6 +573,7 @@ function installProlificSubmissionMock({
       return Response.json({
         id: JA_STUDY_ID,
         prolific_id_option: "url_parameters",
+        total_available_places: totalAvailablePlaces,
         is_ready_to_publish: studyReady,
         completion_codes: [{
           code: completionCode,
@@ -493,6 +614,7 @@ function installProlificMatrixMock(
       return Response.json({
         id: studyId,
         prolific_id_option: "url_parameters",
+        total_available_places: 300,
         is_ready_to_publish: true,
         completion_codes: [{
           code: COMPLETION_CODE,
@@ -610,11 +732,14 @@ describe("UVLT Cloudflare field Worker", () => {
       SELECT name FROM sqlite_schema
       WHERE type = 'table' AND name IN (
         'runtime_releases', 'studies', 'runtime_testlets', 'runtime_route_testlets',
-        'runtime_allocation_slots', 'sessions', 'testlet_submissions', 'responses', 'session_events'
+        'runtime_allocation_slots', 'allocation_start_ledger', 'protocol_completion_ledger',
+        'sessions', 'testlet_submissions', 'responses', 'session_events'
       )
       ORDER BY name
     `).all<{ name: string }>();
     expect(tables.results.map(({ name }) => name)).toEqual([
+      "allocation_start_ledger",
+      "protocol_completion_ledger",
       "responses",
       "runtime_allocation_slots",
       "runtime_releases",
@@ -631,7 +756,17 @@ describe("UVLT Cloudflare field Worker", () => {
     expect(configResponse.headers.get("cache-control")).toContain("no-store");
     expect(configResponse.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
     const config = await responseJson(configResponse);
-    expect(config).toMatchObject({ ok: true, collection_enabled: false, practice_enabled: false });
+    expect(config).toMatchObject({
+      ok: true,
+      collection_enabled: false,
+      practice_enabled: false,
+      target_protocol_completers_per_l1: 300,
+      hard_cap_starts_per_l1: 420,
+      stop_new_allocations_at_target: true,
+      retain_server_committed_partial_responses: true,
+      protocol_completion_definition: PROTOCOL_COMPLETION_DEFINITION,
+      partial_response_retention_definition: PARTIAL_RESPONSE_RETENTION_DEFINITION
+    });
     expect(JSON.stringify(config)).not.toContain(COMPLETION_CODE);
 
     const joinResponse = await requestWorker(
@@ -653,6 +788,47 @@ describe("UVLT Cloudflare field Worker", () => {
     });
     expect(removedStartResponse.status).toBe(404);
     expect(await responseJson(removedStartResponse)).toMatchObject({ ok: false, code: "NOT_FOUND" });
+  });
+
+  it("serves a privacy-safe recruitment-closed landing without retaining launch identifiers", async () => {
+    const assetFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const target = typeof input === "string"
+        ? new URL(input)
+        : input instanceof URL
+          ? input
+          : new URL(input.url);
+      expect(target.pathname).toBe("/index.html");
+      expect(target.search).toBe("");
+      return new Response("<!doctype html><title>Closed shell</title>", {
+        status: 200,
+        headers: { "Content-Type": "text/html; charset=utf-8" }
+      });
+    });
+    const staticEnv = fieldEnvironment({ ASSETS: { fetch: assetFetch } });
+    const clean = await requestWorker("/recruitment-closed", {}, staticEnv);
+    expect(clean.status).toBe(200);
+    expect(clean.headers.get("cache-control")).toContain("no-store");
+    expect(clean.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(await clean.text()).toContain("Closed shell");
+    expect(assetFetch).toHaveBeenCalledTimes(1);
+
+    for (const dirtyPath of [
+      "/recruitment-closed/",
+      `/recruitment-closed?PROLIFIC_PID=${PARTICIPANT_ID}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${SUBMISSION_ID}`
+    ]) {
+      const canonical = await requestWorker(dirtyPath, {}, staticEnv);
+      expect(canonical.status).toBe(303);
+      expect(canonical.headers.get("location")).toBe("/recruitment-closed");
+      expect(canonical.headers.get("set-cookie")).toBeNull();
+      expect(await canonical.text()).toBe("");
+      assertNoRawLinkIdentifiers([...canonical.headers].map(([key, value]) => `${key}:${value}`).join("\n"));
+    }
+    expect(assetFetch).toHaveBeenCalledTimes(1);
+
+    const rejectedPost = await requestWorker("/recruitment-closed", { method: "POST" }, staticEnv);
+    expect(rejectedPost.status).toBe(405);
+    expect(rejectedPost.headers.get("allow")).toBe("GET, HEAD");
+    expect(assetFetch).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when any pinned release identity or the actual HMAC secret differs", async () => {
@@ -743,7 +919,7 @@ describe("UVLT Cloudflare field Worker", () => {
       routes: number;
       layouts: number;
     }>();
-    expect(blocks.results).toHaveLength(60);
+    expect(blocks.results).toHaveLength(84);
     expect(blocks.results.every((block) => block.slots === 10 && block.routes === 10 && block.layouts === 6)).toBe(true);
 
     const routeLayoutCells = await bindings.DB.prepare(`
@@ -758,7 +934,7 @@ describe("UVLT Cloudflare field Worker", () => {
       allocations: number;
     }>();
     expect(routeLayoutCells.results).toHaveLength(120);
-    expect(routeLayoutCells.results.every((cell) => cell.allocations === 5)).toBe(true);
+    expect(routeLayoutCells.results.every((cell) => cell.allocations === 7)).toBe(true);
   });
 
   it("fails closed when structurally balanced D1 slots do not reproduce the pinned schedule hash", async () => {
@@ -884,6 +1060,7 @@ describe("UVLT Cloudflare field Worker", () => {
     const cases = [
       { completionCode: "OTHER123" },
       { completionAction: "AUTOMATICALLY_APPROVE" },
+      { totalAvailablePlaces: 299 },
       { studyReady: false },
       { studyResponseStatus: 503 }
     ];
@@ -941,8 +1118,11 @@ describe("UVLT Cloudflare field Worker", () => {
         release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
         runtime_bank_projection_sha256, runtime_routes_projection_sha256,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
+        target_protocol_completers_per_l1, hard_cap_starts_per_l1,
+        stop_new_allocations_at_target, retain_server_committed_partial_responses,
+        protocol_completion_definition, partial_response_retention_definition,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 300, 420, 1, 1, ?, ?, 100, 300, 9, 0, ?, ?)
     `).bind(
       RELEASE_ID,
       APP_VERSION,
@@ -955,6 +1135,8 @@ describe("UVLT Cloudflare field Worker", () => {
       PARTICIPANT_HMAC_KEY_FINGERPRINT,
       COMPLETION_CODE_FINGERPRINT,
       COMPLETION_ACTION,
+      PROTOCOL_COMPLETION_DEFINITION,
+      PARTIAL_RESPONSE_RETENTION_DEFINITION,
       now,
       now
     ).run();
@@ -980,8 +1162,11 @@ describe("UVLT Cloudflare field Worker", () => {
         release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
         runtime_bank_projection_sha256, runtime_routes_projection_sha256,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
+        target_protocol_completers_per_l1, hard_cap_starts_per_l1,
+        stop_new_allocations_at_target, retain_server_committed_partial_responses,
+        protocol_completion_definition, partial_response_retention_definition,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES ('release-direct-active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 1, ?, ?)
+      ) VALUES ('release-direct-active', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 300, 420, 1, 1, ?, ?, 100, 300, 9, 1, ?, ?)
     `).bind(
       APP_VERSION,
       PUBLIC_BUILD_MANIFEST_SHA256,
@@ -993,6 +1178,8 @@ describe("UVLT Cloudflare field Worker", () => {
       PARTICIPANT_HMAC_KEY_FINGERPRINT,
       COMPLETION_CODE_FINGERPRINT,
       COMPLETION_ACTION,
+      PROTOCOL_COMPLETION_DEFINITION,
+      PARTIAL_RESPONSE_RETENTION_DEFINITION,
       now,
       now
     ).run()).rejects.toThrow();
@@ -1082,7 +1269,7 @@ describe("UVLT Cloudflare field Worker", () => {
       route_rows: number;
       allocation_slots: number;
     }>();
-    expect(frozenCounts).toEqual({ releases: 1, studies: 2, testlets: 100, route_rows: 1000, allocation_slots: 600 });
+    expect(frozenCounts).toEqual({ releases: 1, studies: 2, testlets: 100, route_rows: 1000, allocation_slots: 840 });
   });
 
   it("freezes session assignment and validates stored choice positions at the D1 boundary", async () => {
@@ -1187,6 +1374,80 @@ describe("UVLT Cloudflare field Worker", () => {
       UPDATE testlet_submissions SET elapsed_ms = 1001
       WHERE session_id = ? AND testlet_ordinal = 0
     `).bind(sessionId).run()).rejects.toThrow();
+  });
+
+  it("records protocol completion only after D1 verifies the full persisted record", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    await expect(bindings.DB.prepare(`
+      INSERT INTO allocation_start_ledger (release_id, l1, allocation_index)
+      VALUES (?, 'ja', 0)
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/requires its originating session/u);
+    await expect(bindings.DB.prepare(`
+      INSERT INTO protocol_completion_ledger (release_id, l1, allocation_index)
+      VALUES (?, 'ja', 0)
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/requires a verified completed session/u);
+    const now = "2026-07-20T00:00:00.000Z";
+    const slot = syntheticAllocationSlot("ja", 0);
+    await bindings.DB.prepare(`
+      INSERT INTO sessions (
+        session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
+        allocation_index, randomization_block, block_position, route_id, option_layout_id,
+        token_sha256, token_expires_at, status, next_testlet_ordinal,
+        completed_testlets, response_count, breaks_completed, created_at, updated_at
+      ) VALUES (?, ?, ?, 'ja', ?, ?, 0, ?, ?, ?, ?, ?, ?, 'in_progress', 100, 100, 300, 9, ?, ?)
+    `).bind(
+      "completion-boundary-in-progress",
+      RELEASE_ID,
+      JA_STUDY_ID,
+      "a".repeat(64),
+      "b".repeat(64),
+      slot.randomizationBlock,
+      slot.blockPosition,
+      slot.routeId,
+      slot.optionLayoutId,
+      "c".repeat(64),
+      "2026-07-21T00:00:00.000Z",
+      now,
+      now
+    ).run();
+    await expect(bindings.DB.prepare(`
+      UPDATE sessions SET status = 'completed', completed_at = ?, updated_at = ?
+      WHERE session_id = 'completion-boundary-in-progress'
+    `).bind(now, now).run()).rejects.toThrow(/full verified response and break record/u);
+    await expect(bindings.DB.prepare(`
+      INSERT INTO protocol_completion_ledger (release_id, l1, allocation_index)
+      VALUES (?, 'ja', 0)
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/requires a verified completed session/u);
+
+    const secondSlot = syntheticAllocationSlot("ja", 1);
+    await expect(bindings.DB.prepare(`
+      INSERT INTO sessions (
+        session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
+        allocation_index, randomization_block, block_position, route_id, option_layout_id,
+        token_sha256, token_expires_at, status, next_testlet_ordinal,
+        completed_testlets, response_count, breaks_completed,
+        created_at, updated_at, completed_at
+      ) VALUES (?, ?, ?, 'ja', ?, ?, 1, ?, ?, ?, ?, ?, ?, 'completed', 100, 100, 300, 9, ?, ?, ?)
+    `).bind(
+      "completion-boundary-direct",
+      RELEASE_ID,
+      JA_STUDY_ID,
+      "d".repeat(64),
+      "e".repeat(64),
+      secondSlot.randomizationBlock,
+      secondSlot.blockPosition,
+      secondSlot.routeId,
+      secondSlot.optionLayoutId,
+      "f".repeat(64),
+      "2026-07-21T00:00:00.000Z",
+      now,
+      now,
+      now
+    ).run()).rejects.toThrow(/must begin in progress/u);
+    expect(await bindings.DB.prepare(`
+      SELECT COUNT(*) AS count FROM protocol_completion_ledger WHERE release_id = ?
+    `).bind(RELEASE_ID).first<{ count: number }>()).toEqual({ count: 0 });
   });
 
   it("allows one-way emergency study closure and fails collection closed", async () => {
@@ -1493,12 +1754,12 @@ describe("UVLT Cloudflare field Worker", () => {
     });
   });
 
-  it("allocates slot 299 exactly once and then closes the 300-start L1 capacity", async () => {
+  it("allocates slot 419 exactly once and then closes the 420-start L1 hard cap", async () => {
     await applySchema();
     await seedReadySyntheticRelease();
     const now = "2026-07-20T00:00:00.000Z";
     const existingSessions: D1PreparedStatement[] = [];
-    for (let allocationIndex = 0; allocationIndex < 299; allocationIndex += 1) {
+    for (let allocationIndex = 0; allocationIndex < 419; allocationIndex += 1) {
       const slot = syntheticAllocationSlot("ja", allocationIndex);
       existingSessions.push(bindings.DB.prepare(`
         INSERT INTO sessions (
@@ -1532,15 +1793,27 @@ describe("UVLT Cloudflare field Worker", () => {
     installProlificMatrixMock(JA_STUDY_ID, identities);
     vi.spyOn(console, "log").mockImplementation(() => undefined);
 
-    const finalJoin = await requestWorker(
-      `/join?PROLIFIC_PID=${identities[0].participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identities[0].submissionId}`,
+    const boundaryJoins = await Promise.all(identities.map((identity) => requestWorker(
+      `/join?PROLIFIC_PID=${identity.participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identity.submissionId}`,
       {},
       fieldEnv
-    );
-    expect(finalJoin.headers.get("set-cookie")).not.toBeNull();
+    )));
+    const accepted = boundaryJoins.filter((response) => response.headers.get("set-cookie") !== null);
+    const closed = boundaryJoins.filter((response) => response.headers.get("set-cookie") === null);
+    expect(accepted).toHaveLength(1);
+    expect(closed).toHaveLength(1);
+    expect(closed[0].status).toBe(303);
+    expect(closed[0].headers.get("location")).toBe("/recruitment-closed");
+    expect(closed[0].headers.get("set-cookie")).toBeNull();
+    expect(await closed[0].text()).toBe("");
+    const closedHeaders = [...closed[0].headers].map(([key, value]) => `${key}:${value}`).join("\n");
+    for (const identity of identities) {
+      expect(closedHeaders).not.toContain(identity.participantId);
+      expect(closedHeaders).not.toContain(identity.submissionId);
+    }
     const finalSlot = await bindings.DB.prepare(`
       SELECT allocation_index, randomization_block, block_position, route_id, option_layout_id
-      FROM sessions WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 299
+      FROM sessions WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 419
     `).bind(RELEASE_ID).first<{
       allocation_index: number;
       randomization_block: number;
@@ -1548,26 +1821,178 @@ describe("UVLT Cloudflare field Worker", () => {
       route_id: string;
       option_layout_id: number;
     }>();
-    const expectedFinalSlot = syntheticAllocationSlot("ja", 299);
+    const expectedFinalSlot = syntheticAllocationSlot("ja", 419);
     expect(finalSlot).toEqual({
-      allocation_index: 299,
+      allocation_index: 419,
       randomization_block: expectedFinalSlot.randomizationBlock,
       block_position: expectedFinalSlot.blockPosition,
       route_id: expectedFinalSlot.routeId,
       option_layout_id: expectedFinalSlot.optionLayoutId
     });
+    expect(await bindings.DB.prepare(`
+      SELECT COUNT(*) AS count, MAX(allocation_index) AS maximum
+      FROM sessions WHERE release_id = ? AND l1 = 'ja'
+    `).bind(RELEASE_ID).first<{ count: number; maximum: number }>()).toEqual({ count: 420, maximum: 419 });
+  });
 
-    const overCapacity = await requestWorker(
+  it("stops new starts at 300 protocol completers in one L1 without closing the other L1", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    await insertSyntheticProtocolCompleters("ja", 0, 300);
+    expect(await bindings.DB.prepare(`
+      SELECT COUNT(*) AS count FROM protocol_completion_ledger
+      WHERE release_id = ? AND l1 = 'ja'
+    `).bind(RELEASE_ID).first<{ count: number }>()).toEqual({ count: 300 });
+    await expect(bindings.DB.prepare(`
+      UPDATE allocation_start_ledger SET allocation_index = allocation_index
+      WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/append-only/u);
+    await expect(bindings.DB.prepare(`
+      UPDATE protocol_completion_ledger SET allocation_index = allocation_index
+      WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/append-only/u);
+    await expect(bindings.DB.prepare(`
+      DELETE FROM protocol_completion_ledger
+      WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/append-only/u);
+
+    const jaIdentities = Array.from({ length: 10 }, (_value, index) => ({
+      participantId: prolificHexId(0x410 + index),
+      submissionId: prolificHexId(0x4100 + index)
+    }));
+    const jaMock = installProlificMatrixMock(JA_STUDY_ID, jaIdentities);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const blockedJa = await Promise.all(jaIdentities.map((identity) => requestWorker(
+      `/join?PROLIFIC_PID=${identity.participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identity.submissionId}`,
+      {},
+      fieldEnvironment()
+    )));
+    expect(blockedJa.every((response) => response.status === 303 &&
+      response.headers.get("location") === "/recruitment-closed" &&
+      response.headers.get("set-cookie") === null)).toBe(true);
+    for (const response of blockedJa) {
+      expect(await response.text()).toBe("");
+      const responseHeaders = [...response.headers].map(([key, value]) => `${key}:${value}`).join("\n");
+      for (const identity of jaIdentities) {
+        expect(responseHeaders).not.toContain(identity.participantId);
+        expect(responseHeaders).not.toContain(identity.submissionId);
+      }
+    }
+    const closedLanding = await requestWorker("/recruitment-closed", {}, fieldEnvironment());
+    expect(closedLanding.status).toBe(200);
+    expect(await closedLanding.text()).toContain("Synthetic field shell");
+    jaMock.mockRestore();
+
+    const viIdentity = { participantId: prolificHexId(0x411), submissionId: prolificHexId(0x4101) };
+    installProlificMatrixMock(VI_STUDY_ID, [viIdentity]);
+    const acceptedVi = await requestWorker(
+      `/join?PROLIFIC_PID=${viIdentity.participantId}&STUDY_ID=${VI_STUDY_ID}&SESSION_ID=${viIdentity.submissionId}`,
+      {},
+      fieldEnvironment()
+    );
+    expect(acceptedVi.headers.get("set-cookie")).not.toBeNull();
+    expect(await bindings.DB.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM allocation_start_ledger WHERE release_id = ? AND l1 = 'ja') AS ja_starts,
+        (SELECT COUNT(*) FROM allocation_start_ledger WHERE release_id = ? AND l1 = 'vi') AS vi_starts
+    `).bind(RELEASE_ID, RELEASE_ID).first<{ ja_starts: number; vi_starts: number }>())
+      .toEqual({ ja_starts: 300, vi_starts: 1 });
+  });
+
+  it("keeps a server-committed partial session resumable after its L1 reaches target", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const fieldEnv = fieldEnvironment();
+    installProlificSubmissionMock();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const cookie = await launchSyntheticSession(fieldEnv);
+    const stateResponse = await requestWorker("/api/session/state", {
+      headers: { Cookie: cookie, Origin: ORIGIN, "Sec-Fetch-Site": "same-origin" }
+    }, fieldEnv);
+    const state = await responseJson(stateResponse);
+    const testlet = currentTestlet(state, 0);
+    const saved = await requestWorker("/api/session/testlet-response", authenticatedJson(
+      cookie,
+      testletSubmissionBody(0, testlet.options.slice(0, 3))
+    ), fieldEnv);
+    expect(saved.status).toBe(200);
+
+    await insertSyntheticProtocolCompleters("ja", 1, 300);
+    const resumed = await requestWorker(
+      `/join?PROLIFIC_PID=${PARTICIPANT_ID}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${SUBMISSION_ID}`,
+      { headers: { Cookie: cookie } },
+      fieldEnv
+    );
+    const resumedCookie = resumed.headers.get("set-cookie")!.split(";", 1)[0];
+    const resumedState = await responseJson(await requestWorker("/api/session/state", {
+      headers: { Cookie: resumedCookie, Origin: ORIGIN, "Sec-Fetch-Site": "same-origin" }
+    }, fieldEnv));
+    expect(resumedState).toMatchObject({ completed_testlets: 1 });
+    expect(await bindings.DB.prepare(`
+      SELECT
+        (SELECT COUNT(*) FROM testlet_submissions) AS submissions,
+        (SELECT COUNT(*) FROM responses) AS responses,
+        (SELECT COUNT(*) FROM protocol_completion_ledger WHERE release_id = ? AND l1 = 'ja') AS completers
+    `).bind(RELEASE_ID).first<{ submissions: number; responses: number; completers: number }>())
+      .toEqual({ submissions: 1, responses: 3, completers: 300 });
+    await expect(bindings.DB.prepare("DELETE FROM responses").run())
+      .rejects.toThrow(/append-only/u);
+    await expect(bindings.DB.prepare("DELETE FROM testlet_submissions").run())
+      .rejects.toThrow(/append-only/u);
+  });
+
+  it("never recycles a consumed allocation index after participant-linked rows are deleted", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const identities = [
+      { participantId: prolificHexId(0x420), submissionId: prolificHexId(0x4200) },
+      { participantId: prolificHexId(0x421), submissionId: prolificHexId(0x4201) }
+    ];
+    installProlificMatrixMock(JA_STUDY_ID, identities);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fieldEnv = fieldEnvironment();
+    const first = await requestWorker(
+      `/join?PROLIFIC_PID=${identities[0].participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identities[0].submissionId}`,
+      {},
+      fieldEnv
+    );
+    expect(first.headers.get("set-cookie")).not.toBeNull();
+    const firstSession = await bindings.DB.prepare(`
+      SELECT session_id FROM sessions WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+    `).bind(RELEASE_ID).first<{ session_id: string }>();
+    await expect(bindings.DB.prepare("DELETE FROM session_events WHERE session_id = ?")
+      .bind(firstSession!.session_id).run()).rejects.toThrow(/append-only/u);
+    await expect(bindings.DB.prepare("DELETE FROM sessions WHERE session_id = ?")
+      .bind(firstSession!.session_id).run()).rejects.toThrow(/withdrawal-redaction/u);
+    // Model the separately reviewed withdrawal/redaction migration. The
+    // participant-linked rows may be removed, but the minimal ledger remains.
+    await bindings.DB.batch([
+      bindings.DB.prepare("DROP TRIGGER session_events_reject_delete"),
+      bindings.DB.prepare("DROP TRIGGER sessions_reject_delete")
+    ]);
+    await bindings.DB.prepare("DELETE FROM session_events WHERE session_id = ?")
+      .bind(firstSession!.session_id).run();
+    await bindings.DB.prepare("DELETE FROM sessions WHERE session_id = ?")
+      .bind(firstSession!.session_id).run();
+
+    const second = await requestWorker(
       `/join?PROLIFIC_PID=${identities[1].participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identities[1].submissionId}`,
       {},
       fieldEnv
     );
-    expect(overCapacity.status).toBe(303);
-    expect(overCapacity.headers.get("set-cookie")).toBeNull();
+    expect(second.headers.get("set-cookie")).not.toBeNull();
     expect(await bindings.DB.prepare(`
-      SELECT COUNT(*) AS count, MAX(allocation_index) AS maximum
-      FROM sessions WHERE release_id = ? AND l1 = 'ja'
-    `).bind(RELEASE_ID).first<{ count: number; maximum: number }>()).toEqual({ count: 300, maximum: 299 });
+      SELECT allocation_index FROM sessions WHERE release_id = ? AND l1 = 'ja'
+    `).bind(RELEASE_ID).first<{ allocation_index: number }>()).toEqual({ allocation_index: 1 });
+    expect(await bindings.DB.prepare(`
+      SELECT allocation_index FROM allocation_start_ledger
+      WHERE release_id = ? AND l1 = 'ja' ORDER BY allocation_index
+    `).bind(RELEASE_ID).all<{ allocation_index: number }>()).toMatchObject({
+      results: [{ allocation_index: 0 }, { allocation_index: 1 }]
+    });
+    await expect(bindings.DB.prepare(`
+      DELETE FROM allocation_start_ledger WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+    `).bind(RELEASE_ID).run()).rejects.toThrow(/append-only/u);
   });
 
   it("runs a Vietnamese-L1 launch, private state, and response save end to end", async () => {
@@ -1752,6 +2177,9 @@ describe("UVLT Cloudflare field Worker", () => {
     installProlificSubmissionMock();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const cookie = await launchSyntheticSession(fieldEnv);
+    // Once the target is observed, starts already allocated remain resumable
+    // and may complete during the preregistered grace period.
+    await insertSyntheticProtocolCompleters("ja", 1, 300);
 
     let stateResponse = await requestWorker("/api/session/state", {
       headers: { Cookie: cookie, Origin: ORIGIN, "Sec-Fetch-Site": "same-origin" }
@@ -1853,7 +2281,9 @@ describe("UVLT Cloudflare field Worker", () => {
         (SELECT COUNT(*) FROM session_events e
           WHERE e.session_id = s.session_id AND e.event_type = 'break_completed') AS break_events,
         (SELECT COUNT(*) FROM session_events e
-          WHERE e.session_id = s.session_id AND e.event_type = 'session_completed') AS completion_events
+          WHERE e.session_id = s.session_id AND e.event_type = 'session_completed') AS completion_events,
+        (SELECT COUNT(*) FROM protocol_completion_ledger pc
+          WHERE pc.release_id = s.release_id AND pc.l1 = s.l1) AS protocol_completers
       FROM sessions s
       WHERE s.release_id = ? AND s.l1 = 'ja'
     `).bind(RELEASE_ID).first<{
@@ -1867,6 +2297,7 @@ describe("UVLT Cloudflare field Worker", () => {
       responses: number;
       break_events: number;
       completion_events: number;
+      protocol_completers: number;
     }>();
     expect(finalCounts).toMatchObject({
       status: "completed",
@@ -1876,7 +2307,8 @@ describe("UVLT Cloudflare field Worker", () => {
       submissions: 100,
       responses: 300,
       break_events: 9,
-      completion_events: 1
+      completion_events: 1,
+      protocol_completers: 301
     });
     expect(finalCounts?.completed_at).toMatch(ISO_UTC_PATTERN_FOR_TEST);
     expect(finalCounts?.completion_issued_at).toMatch(ISO_UTC_PATTERN_FOR_TEST);

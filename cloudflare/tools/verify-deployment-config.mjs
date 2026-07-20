@@ -3,7 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   RANDOMIZATION_ALGORITHM,
-  OPTION_LAYOUT_ALGORITHM
+  OPTION_LAYOUT_ALGORITHM,
+  validateRecruitmentPolicy
 } from "./randomization-design.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -71,7 +72,8 @@ const [release, wrangler, packageMetadata] = await Promise.all([
   readJson(path.join(project, "package.json"), "package.json")
 ]);
 
-assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-5", "Private release config schema is unsupported");
+assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Private release config schema is unsupported");
+validateRecruitmentPolicy(release.recruitmentPolicy);
 assert(release.active === true, "Private release config must be active before field deployment");
 assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
 assert(typeof release.appVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(release.appVersion), "Private release appVersion is invalid");
