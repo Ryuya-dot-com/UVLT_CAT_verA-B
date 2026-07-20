@@ -58,7 +58,7 @@ const routesPayloadSha256 = routes.integrity.payloadSha256;
 const releaseId = "uvlt-fixed-ab-randomization-test";
 const seed = "test-only-randomization-seed-32-bytes-minimum";
 const KNOWN_SCHEDULE_PAYLOAD_SHA256 =
-  "44f2a50aacac2d2f2ac4e2a5373c7ae95dc075b2db81c755b04c73b2bf16ba6f";
+  "3221170e3a9658871f76007f86352b430eacd02ad527813b7fdd9cea4f3ebddc";
 
 function scheduleFor(seedValue = seed) {
   return generateAllocationSchedule({ seed: seedValue, releaseId, routesPayloadSha256 });

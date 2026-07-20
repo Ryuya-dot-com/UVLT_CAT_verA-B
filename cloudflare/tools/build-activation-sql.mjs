@@ -9,6 +9,11 @@ import {
   RANDOMIZATION_ALGORITHM,
   validateRecruitmentPolicy
 } from "./randomization-design.mjs";
+import {
+  ADMINISTRATION_POLICY_APPROVAL_GATES,
+  validateAdministrationPolicy,
+  validateAdministrationPolicySha256
+} from "./administration-policy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -31,6 +36,7 @@ const requiredApprovals = Object.freeze([
   "privateWorkspaceApprovalRecorded",
   "randomizationScheduleReviewRecorded",
   "attritionReplacementPolicyRecorded",
+  ...ADMINISTRATION_POLICY_APPROVAL_GATES,
   "independentPrelaunchReviewCompleted"
 ]);
 
@@ -61,9 +67,10 @@ function assertCanonicalIsoDateTime(value, label) {
 export function buildActivationSql(release) {
   assert(release && typeof release === "object" && !Array.isArray(release),
     "Release config must be an object");
-  assert(release.schemaVersion === "uvlt-fixed-ab-field-release-config-6",
+  assert(release.schemaVersion === "uvlt-fixed-ab-field-release-config-7",
     "Release config schema is unsupported");
   validateRecruitmentPolicy(release.recruitmentPolicy);
+  validateAdministrationPolicy(release.administrationPolicy);
   assert(release.active === true,
     "Activation SQL requires a finalized release config with active=true");
   assert(typeof release.releaseId === "string" &&
@@ -77,6 +84,7 @@ export function buildActivationSql(release) {
   assert(release.optionLayoutAlgorithm === OPTION_LAYOUT_ALGORITHM,
     "Option-layout algorithm is unsupported");
   const expectedHashKeys = [
+    "administrationPolicySha256",
     "allocationScheduleSha256",
     "bankPayloadSha256",
     "publicBuildManifestSha256",
@@ -87,11 +95,14 @@ export function buildActivationSql(release) {
   ];
   assert(JSON.stringify(Object.keys(release.expectedHashes || {}).sort()) ===
     JSON.stringify(expectedHashKeys),
-  "Release config must contain exactly the seven supported expected hashes");
+  "Release config must contain exactly the eight supported expected hashes");
   for (const value of Object.values(release.expectedHashes)) {
     assert(sha256Pattern.test(value || "") && value !== zeroSha256,
       "Every expected release hash must be a non-placeholder SHA-256 value");
   }
+  validateAdministrationPolicySha256(
+    release.expectedHashes.administrationPolicySha256
+  );
   for (const [label, value] of [
     ["randomizationSeedFingerprint", release.randomizationSeedFingerprint],
     ["participantHmacKeyFingerprint", release.participantHmacKeyFingerprint],

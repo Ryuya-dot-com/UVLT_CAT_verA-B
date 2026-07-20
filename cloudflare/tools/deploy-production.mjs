@@ -15,6 +15,11 @@ import {
   workerUploadInputsSha256
 } from "./worker-upload-inputs.mjs";
 import { validateRecruitmentPolicy } from "./randomization-design.mjs";
+import {
+  ADMINISTRATION_POLICY_APPROVAL_GATES,
+  validateAdministrationPolicy,
+  validateAdministrationPolicySha256
+} from "./administration-policy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -72,6 +77,7 @@ let release;
 let packageMetadata;
 let wranglerPackage;
 let wranglerConfigBytes;
+let wrangler;
 let workerVersionAttestation;
 let uploadInputs;
 try {
@@ -82,6 +88,7 @@ try {
     readFile(wranglerConfigPath),
     readFile(workerVersionAttestationPath, "utf8").then(JSON.parse)
   ]);
+  wrangler = JSON.parse(wranglerConfigBytes.toString("utf8"));
 } catch {
   throw new Error("Private release config, Worker-version attestation, production Wrangler config, package.json, and the installed local Wrangler package must be present and valid");
 }
@@ -92,8 +99,9 @@ try {
   throw new Error(`Current Worker upload inputs could not be frozen: ${error instanceof Error ? error.message : "unknown error"}`);
 }
 
-assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Private release config schema is unsupported");
+assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-7", "Private release config schema is unsupported");
 validateRecruitmentPolicy(release.recruitmentPolicy);
+validateAdministrationPolicy(release.administrationPolicy);
 assert(release.active === true, "Private release config must be active before deployment");
 assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
 assert(release.appVersion === packageMetadata?.version, "Private release appVersion must exactly match package.json version");
@@ -102,6 +110,7 @@ assert(
   "Private active release workerVersionId must be a canonical lowercase Cloudflare Worker version UUID"
 );
 for (const field of [
+  "administrationPolicySha256",
   "runtimeManifestPayloadSha256",
   "bankPayloadSha256",
   "routesPayloadSha256",
@@ -116,6 +125,14 @@ for (const field of [
     `Private release expectedHashes.${field} is invalid`
   );
 }
+validateAdministrationPolicySha256(
+  release.expectedHashes.administrationPolicySha256
+);
+assert(
+  wrangler.vars?.EXPECTED_ADMINISTRATION_POLICY_SHA256 ===
+    release.expectedHashes.administrationPolicySha256,
+  "Production Wrangler EXPECTED_ADMINISTRATION_POLICY_SHA256 does not match the release"
+);
 assert(
   /^sha256:[0-9a-f]{64}$/.test(release.randomizationSeedFingerprint || "") &&
     release.randomizationSeedFingerprint !== `sha256:${"0".repeat(64)}`,
@@ -138,6 +155,7 @@ for (const approval of [
   "privateWorkspaceApprovalRecorded",
   "randomizationScheduleReviewRecorded",
   "attritionReplacementPolicyRecorded",
+  ...ADMINISTRATION_POLICY_APPROVAL_GATES,
   "independentPrelaunchReviewCompleted"
 ]) {
   assert(release.approvals?.[approval] === true, `Private release approval ${approval} is not recorded`);

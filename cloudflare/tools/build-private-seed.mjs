@@ -16,6 +16,12 @@ import {
   runtimeProjectionSha256,
   runtimeRoutesProjection
 } from "./runtime-projections.mjs";
+import {
+  ADMINISTRATION_POLICY_APPROVAL_GATES,
+  ADMINISTRATION_POLICY_JSON,
+  validateAdministrationPolicy,
+  validateAdministrationPolicySha256
+} from "./administration-policy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -160,10 +166,12 @@ assertExactKeys(config, [
   "schemaVersion", "releaseId", "appVersion", "workerVersionId", "createdAt", "frozenAt", "active",
   "randomizationSeedFingerprint", "randomizationAlgorithm", "optionLayoutAlgorithm",
   "participantHmacKeyFingerprint", "prolificCompletionCodeFingerprint",
-  "prolificCompletionAction", "recruitmentPolicy", "expectedHashes", "approvals", "studies"
+  "prolificCompletionAction", "recruitmentPolicy", "administrationPolicy",
+  "expectedHashes", "approvals", "studies"
 ], "Release config");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Unsupported release config schema");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-7", "Unsupported release config schema");
 validateRecruitmentPolicy(config.recruitmentPolicy);
+validateAdministrationPolicy(config.administrationPolicy);
 assertBoundedString(config.releaseId, "releaseId", { min: 8, max: 128, pattern: /^[a-z0-9][a-z0-9._-]+$/ });
 assertBoundedString(config.appVersion, "appVersion", { min: 8, max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]+$/ });
 assert(config.workerVersionId === null || /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(config.workerVersionId), "workerVersionId must be null or a canonical lowercase Cloudflare Worker version UUID");
@@ -198,6 +206,7 @@ assert(publicBuildManifest.schemaVersion === "uvlt-field-public-build-2", "Unsup
 assert(publicBuildManifest.appVersion === packageMetadata.version, "Public build manifest appVersion must exactly match package.json version");
 assert(Array.isArray(publicBuildManifest.files), "Public build manifest files must be an array");
 assertExactKeys(config.expectedHashes, [
+  "administrationPolicySha256",
   "runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256",
   "runtimeBankProjectionSha256", "runtimeRoutesProjectionSha256",
   "allocationScheduleSha256", "publicBuildManifestSha256"
@@ -205,6 +214,7 @@ assertExactKeys(config.expectedHashes, [
 for (const [field, value] of Object.entries(config.expectedHashes)) {
   assert(/^[0-9a-f]{64}$/.test(value || ""), `expectedHashes.${field} must be a lowercase SHA-256 value`);
 }
+validateAdministrationPolicySha256(config.expectedHashes.administrationPolicySha256);
 assert(config.expectedHashes.runtimeManifestPayloadSha256 === manifest.integrity.payloadSha256, "Release config does not pin this runtime manifest");
 assert(config.expectedHashes.bankPayloadSha256 === bank.integrity.payloadSha256, "Release config does not pin this bank");
 assert(config.expectedHashes.routesPayloadSha256 === routes.integrity.payloadSha256, "Release config does not pin this route set");
@@ -249,6 +259,7 @@ const requiredApprovals = [
   "privateWorkspaceApprovalRecorded",
   "randomizationScheduleReviewRecorded",
   "attritionReplacementPolicyRecorded",
+  ...ADMINISTRATION_POLICY_APPROVAL_GATES,
   "independentPrelaunchReviewCompleted"
 ];
 assertExactKeys(approvals, requiredApprovals, "approvals");
@@ -453,7 +464,8 @@ const lines = [
   "PRAGMA foreign_keys = ON;",
   "",
   "INSERT INTO runtime_releases (",
-  "  release_id, app_version, worker_version_id, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,",
+  "  release_id, app_version, worker_version_id, administration_policy_json, administration_policy_sha256,",
+  "  public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,",
   "  runtime_bank_projection_sha256, runtime_routes_projection_sha256,",
   "  allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm, participant_hmac_key_fingerprint,",
   "  prolific_completion_code_fingerprint, prolific_completion_action,",
@@ -461,7 +473,8 @@ const lines = [
   "  retain_server_committed_partial_responses, protocol_completion_definition, partial_response_retention_definition,",
   "  expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at",
   ") VALUES (",
-  `  ${sql(config.releaseId)}, ${sql(config.appVersion)}, ${sql(config.workerVersionId)}, ${sql(config.expectedHashes.publicBuildManifestSha256)}, ${sql(manifest.integrity.payloadSha256)},`,
+  `  ${sql(config.releaseId)}, ${sql(config.appVersion)}, ${sql(config.workerVersionId)}, ${sql(ADMINISTRATION_POLICY_JSON)}, ${sql(config.expectedHashes.administrationPolicySha256)},`,
+  `  ${sql(config.expectedHashes.publicBuildManifestSha256)}, ${sql(manifest.integrity.payloadSha256)},`,
   `  ${sql(bank.integrity.payloadSha256)}, ${sql(routes.integrity.payloadSha256)},`,
   `  ${sql(runtimeBankProjectionSha256)}, ${sql(runtimeRoutesProjectionSha256)}, ${sql(allocationSchedule?.integrity.payloadSha256)},`,
   `  ${sql(config.randomizationSeedFingerprint)}, ${sql(config.randomizationAlgorithm)}, ${sql(config.optionLayoutAlgorithm)}, ${sql(config.participantHmacKeyFingerprint)},`,
@@ -546,6 +559,7 @@ console.log(JSON.stringify({
   releaseId: config.releaseId,
   appVersion: config.appVersion,
   workerVersionId: config.workerVersionId,
+  administrationPolicySha256: config.expectedHashes.administrationPolicySha256,
   publicBuildManifestSha256: config.expectedHashes.publicBuildManifestSha256,
   runtimeBankProjectionSha256,
   runtimeRoutesProjectionSha256,

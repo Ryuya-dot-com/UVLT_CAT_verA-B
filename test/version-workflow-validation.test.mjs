@@ -25,6 +25,13 @@ import {
   releaseHandoffIdentitySha256,
   workerUploadInputsSha256
 } from "../cloudflare/tools/worker-upload-inputs.mjs";
+import {
+  ADMINISTRATION_POLICY,
+  ADMINISTRATION_POLICY_SHA256
+} from "../cloudflare/tools/administration-policy.mjs";
+import {
+  PROTOCOL_COMPLETION_DEFINITION
+} from "../cloudflare/tools/randomization-design.mjs";
 
 const workerVersionId = "11111111-1111-4111-8111-111111111111";
 const workerName = "uvlt-fixed-ab-calibration";
@@ -207,7 +214,7 @@ test("deployment status accepts only the frozen version at exactly 100 percent",
 
 test("release handoff identity permits only documented lifecycle changes", () => {
   const before = {
-    schemaVersion: "uvlt-fixed-ab-field-release-config-6",
+    schemaVersion: "uvlt-fixed-ab-field-release-config-7",
     releaseId,
     appVersion: "0.1.0-dev",
     workerVersionId: null,
@@ -218,12 +225,19 @@ test("release handoff identity permits only documented lifecycle changes", () =>
       hardCapStartsPerL1: 420,
       stopNewAllocationsAtTarget: true,
       retainServerCommittedPartialResponses: true,
-      protocolCompletionDefinition: "d1-completed-after-100-testlets-300-responses-9-breaks-v1",
+      protocolCompletionDefinition: PROTOCOL_COMPLETION_DEFINITION,
       partialResponseRetentionDefinition: "consented-nonwithdrawn-server-committed-complete-testlets-v1"
     },
-    expectedHashes: { bankPayloadSha256: "1".repeat(64) },
+    administrationPolicy: structuredClone(ADMINISTRATION_POLICY),
+    expectedHashes: {
+      administrationPolicySha256: ADMINISTRATION_POLICY_SHA256,
+      bankPayloadSha256: "1".repeat(64)
+    },
     approvals: {
       contentOwnerApprovalRecorded: true,
+      administrationPolicyIndependentReviewRecorded: true,
+      processDataEthicsPrivacyConsentApproved: true,
+      attentionAnalysisPreregistrationRecorded: true,
       independentPrelaunchReviewCompleted: false
     },
     studies: [
@@ -245,6 +259,20 @@ test("release handoff identity permits only documented lifecycle changes", () =>
   const changedPolicy = structuredClone(before);
   changedPolicy.recruitmentPolicy.hardCapStartsPerL1 = 421;
   assert.notEqual(releaseHandoffIdentitySha256(before), releaseHandoffIdentitySha256(changedPolicy));
+
+  const changedAdministration = structuredClone(before);
+  changedAdministration.administrationPolicy.breaks.standardMinimumSeconds = 46;
+  assert.notEqual(
+    releaseHandoffIdentitySha256(before),
+    releaseHandoffIdentitySha256(changedAdministration)
+  );
+
+  const changedAdministrationApproval = structuredClone(before);
+  changedAdministrationApproval.approvals.attentionAnalysisPreregistrationRecorded = false;
+  assert.notEqual(
+    releaseHandoffIdentitySha256(before),
+    releaseHandoffIdentitySha256(changedAdministrationApproval)
+  );
 });
 
 test("remote Worker creation time is required and normalized from version metadata", () => {

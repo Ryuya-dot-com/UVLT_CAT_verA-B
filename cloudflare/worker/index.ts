@@ -1,6 +1,7 @@
 const COOKIE_NAME = "__Host-uvlt_session";
 const COOKIE_MAX_AGE_SECONDS = 24 * 60 * 60;
 const FIELD_COLLECTION_MODE = "field";
+export const FIELD_WORKER_PROTOCOL_VERSION = "uvlt-fixed-ab-worker-v2";
 const TOTAL_TESTLETS = 100;
 const TOTAL_RESPONSES = 300;
 const TOTAL_BREAKS = 9;
@@ -12,9 +13,16 @@ const RANDOMIZATION_BLOCK_SIZE = 10;
 const RANDOMIZATION_BLOCKS_PER_L1 = HARD_CAP_STARTS_PER_L1 / RANDOMIZATION_BLOCK_SIZE;
 const OPTION_LAYOUT_COUNT = 6;
 const PROTOCOL_COMPLETION_DEFINITION =
-  "d1-completed-after-100-testlets-300-responses-9-breaks-v1";
+  "d1-completed-after-practice-100-testlets-300-responses-8x45s-plus-midpoint90s-breaks-v2";
 const PARTIAL_RESPONSE_RETENTION_DEFINITION =
   "consented-nonwithdrawn-server-committed-complete-testlets-v1";
+const PRACTICE_DEFINITION = "one-synthetic-interface-only-three-row-six-symbol-practice-v1";
+const BREAK_POLICY_DEFINITION = "server-minimum-45s-standard-90s-after-module-5-v1";
+const STANDARD_BREAK_SECONDS = 45;
+const MIDPOINT_BREAK_AFTER_MODULE = 5;
+const MIDPOINT_BREAK_SECONDS = 90;
+const ADMINISTRATION_POLICY_SHA256 = "55588091b7c85cf698e076283503c663eaacf77540d3ec9d03abf5b06b229b43";
+const ADMINISTRATION_POLICY_JSON = '{"breaks":{"backgroundAndReloadTimeCounts":true,"completionDependent":true,"count":9,"definition":"server-minimum-45s-standard-90s-after-module-5-v1","elapsedFrom":"module-final-testlet-server-received-at","midpointAfterModule":5,"midpointMinimumSeconds":90,"serverClockAuthoritative":true,"standardMinimumSeconds":45},"practice":{"completionEventPersisted":true,"definition":"one-synthetic-interface-only-three-row-six-symbol-practice-v1","enabled":true,"feedback":"generic-validity-only","mainResponseCountsAffected":false,"requiredBeforeFirstMainTestlet":true,"responsesPersisted":false},"preparation":{"definition":"single-readiness-screen-before-interface-practice-v1","responsePersisted":false},"processData":{"breakTiming":"derived-from-module-final-server-receipt-and-break-event-v1","clientTiming":"wall-start-submit-plus-monotonic-testlet-elapsed-v1","focusVisibilityEventsPersisted":false,"qualityFlagsComputedAtRuntime":false,"rawInputEventsPersisted":false,"schemaVersion":"uvlt-fixed-ab-process-data-1","unsubmittedSelectionsPersisted":false},"progress":{"definition":"neutral-module-set-and-server-committed-count-v1","showsEstimatedTime":false,"showsOtherParticipantComparison":false,"showsScore":false,"showsSpeed":false},"safeInterruption":{"availableAt":"required-break-screens-only","definition":"break-boundary-guidance-without-server-event-v1","prolificTimerContinues":true},"schemaVersion":"uvlt-fixed-ab-administration-policy-1","unsavedResponseGuard":{"definition":"beforeunload-only-after-main-selection-until-server-confirmation-v1","transmitsUnsubmittedSelections":false}}';
 const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
 const OPTION_LAYOUT_ALGORITHM = "even-order-williams-square-6-canonical-first-v1";
 const RUNTIME_BANK_PROJECTION_SCHEMA = "uvlt-d1-runtime-bank-projection-1";
@@ -33,6 +41,7 @@ const WORKER_VERSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89
 const ZERO_SHA256 = "0".repeat(64);
 const ZERO_SHA256_FINGERPRINT = `sha256:${ZERO_SHA256}`;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+const SERVER_ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const ISO_DATE_MAX_BYTES = 40;
 const PUBLIC_BUILD_MANIFEST_MAX_BYTES = 32 * 1024;
 
@@ -58,6 +67,8 @@ const SECURITY_HEADERS: Readonly<Record<string, string>> = Object.freeze({
 });
 
 type JsonObject = Record<string, unknown>;
+
+const ADMINISTRATION_POLICY = Object.freeze(JSON.parse(ADMINISTRATION_POLICY_JSON)) as Readonly<JsonObject>;
 
 interface ProlificIdentifiers {
   prolificPid: string;
@@ -97,6 +108,7 @@ interface SessionRow {
   completed_testlets: number;
   response_count: number;
   breaks_completed: number;
+  practice_completed_at: string | null;
   completed_at: string | null;
 }
 
@@ -162,6 +174,7 @@ interface ExistingSubmissionRow {
 }
 
 interface CompletionCountsRow {
+  practice_count: number;
   submission_count: number;
   response_count: number;
   break_count: number;
@@ -171,6 +184,8 @@ interface CompletionCountsRow {
 
 interface ReleaseReadinessRow {
   app_version: string;
+  administration_policy_json: string;
+  administration_policy_sha256: string;
   worker_version_id: string | null;
   public_build_manifest_sha256: string;
   runtime_manifest_sha256: string;
@@ -212,6 +227,7 @@ interface ExpectedReleaseIdentity {
   runtimeBankProjectionSha256: string;
   runtimeRoutesProjectionSha256: string;
   allocationScheduleSha256: string;
+  administrationPolicySha256: string;
   participantHmacKeyFingerprint: string;
   prolificCompletionCodeFingerprint: string;
   prolificCompletionAction: ProlificCompletionAction;
@@ -541,6 +557,7 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
   const runtimeBankProjectionSha256: string = env.EXPECTED_RUNTIME_BANK_PROJECTION_SHA256;
   const runtimeRoutesProjectionSha256: string = env.EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256;
   const allocationScheduleSha256: string = env.EXPECTED_ALLOCATION_SCHEDULE_SHA256;
+  const administrationPolicySha256: string = env.EXPECTED_ADMINISTRATION_POLICY_SHA256;
   const participantHmacKeyFingerprint: string = env.EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT;
   const prolificCompletionCodeFingerprint: string = env.EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT;
   const prolificCompletionAction: string = env.EXPECTED_PROLIFIC_COMPLETION_ACTION;
@@ -552,9 +569,11 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
       !SHA256_PATTERN.test(runtimeBankProjectionSha256) ||
       !SHA256_PATTERN.test(runtimeRoutesProjectionSha256) ||
       !SHA256_PATTERN.test(allocationScheduleSha256) ||
+      !SHA256_PATTERN.test(administrationPolicySha256) ||
       [publicBuildManifestSha256, runtimeManifestSha256, bankSha256, routesSha256,
         runtimeBankProjectionSha256, runtimeRoutesProjectionSha256,
-        allocationScheduleSha256].some((value) => value === ZERO_SHA256) ||
+        allocationScheduleSha256, administrationPolicySha256].some((value) => value === ZERO_SHA256) ||
+      administrationPolicySha256 !== ADMINISTRATION_POLICY_SHA256 ||
       !SHA256_FINGERPRINT_PATTERN.test(participantHmacKeyFingerprint) ||
       participantHmacKeyFingerprint === ZERO_SHA256_FINGERPRINT) {
     return null;
@@ -574,6 +593,7 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
     runtimeBankProjectionSha256,
     runtimeRoutesProjectionSha256,
     allocationScheduleSha256,
+    administrationPolicySha256,
     participantHmacKeyFingerprint,
     prolificCompletionCodeFingerprint,
     prolificCompletionAction: prolificCompletionAction as ProlificCompletionAction
@@ -639,6 +659,8 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
   return env.DB.prepare(`
     SELECT
       r.app_version,
+      r.administration_policy_json,
+      r.administration_policy_sha256,
       r.worker_version_id,
       r.public_build_manifest_sha256,
       r.runtime_manifest_sha256,
@@ -684,6 +706,9 @@ function releaseIdentityMatches(
 ): boolean {
   return row !== null && row.frozen_at !== null &&
     row.app_version === expectedIdentity.appVersion &&
+    row.administration_policy_json === ADMINISTRATION_POLICY_JSON &&
+    row.administration_policy_sha256 === ADMINISTRATION_POLICY_SHA256 &&
+    row.administration_policy_sha256 === expectedIdentity.administrationPolicySha256 &&
     WORKER_VERSION_ID_PATTERN.test(row.worker_version_id ?? "") &&
     workerVersionId === row.worker_version_id &&
     row.public_build_manifest_sha256 === expectedIdentity.publicBuildManifestSha256 &&
@@ -997,6 +1022,8 @@ function runtimeVerificationKey(
     runtimeBankProjectionSha256: expectedIdentity.runtimeBankProjectionSha256,
     runtimeRoutesProjectionSha256: expectedIdentity.runtimeRoutesProjectionSha256,
     allocationScheduleSha256: expectedIdentity.allocationScheduleSha256,
+    administrationPolicySha256: expectedIdentity.administrationPolicySha256,
+    administrationPolicyJson: row.administration_policy_json,
     randomizationSeedFingerprint: row.randomization_seed_fingerprint,
     participantHmacKeyFingerprint: expectedIdentity.participantHmacKeyFingerprint,
     prolificCompletionCodeFingerprint: expectedIdentity.prolificCompletionCodeFingerprint,
@@ -1208,7 +1235,7 @@ async function existingLinkedSession(
       session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
       allocation_index, randomization_block, block_position, route_id, option_layout_id,
       status, next_testlet_ordinal, completed_testlets,
-      response_count, breaks_completed, completed_at
+      response_count, breaks_completed, practice_completed_at, completed_at
     FROM sessions
     WHERE submission_link_hmac = ? OR (study_id = ? AND participant_link_hmac = ?)
     LIMIT 3
@@ -1284,11 +1311,11 @@ const ALLOCATE_SESSION_SQL = `
     session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
     allocation_index, randomization_block, block_position, route_id, option_layout_id,
     token_sha256, token_expires_at, status, next_testlet_ordinal,
-    completed_testlets, response_count, breaks_completed, created_at, updated_at
+    completed_testlets, response_count, breaks_completed, practice_completed_at, created_at, updated_at
   )
   SELECT
     ?, ?, ?, ?, ?, ?, allocation_index, randomization_block, block_position, route_id, option_layout_id,
-    ?, ?, 'in_progress', 0, 0, 0, 0, ?, ?
+    ?, ?, 'in_progress', 0, 0, 0, 0, NULL, ?, ?
   FROM assigned_slot
   WHERE allocation_index BETWEEN 0 AND ${HARD_CAP_STARTS_PER_L1 - 1}
     AND protocol_completers < ${TARGET_PROTOCOL_COMPLETERS_PER_L1}
@@ -1296,7 +1323,7 @@ const ALLOCATE_SESSION_SQL = `
     session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
     allocation_index, randomization_block, block_position, route_id, option_layout_id,
     status, next_testlet_ordinal, completed_testlets,
-    response_count, breaks_completed, completed_at
+    response_count, breaks_completed, practice_completed_at, completed_at
 `;
 
 async function createOrResumeSession(
@@ -1384,7 +1411,7 @@ async function authenticateSession(request: Request, env: Env): Promise<SessionR
       session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
       allocation_index, randomization_block, block_position, route_id, option_layout_id,
       status, next_testlet_ordinal, completed_testlets,
-      response_count, breaks_completed, completed_at
+      response_count, breaks_completed, practice_completed_at, completed_at
     FROM sessions
     WHERE session_id = ? AND token_sha256 = ? AND release_id = ? AND token_expires_at > ?
   `).bind(cookie.sessionId, tokenHash, env.EXPECTED_RELEASE_ID, now).first<SessionRow>();
@@ -1404,6 +1431,10 @@ function assertSessionCounters(session: SessionRow): void {
       !Number.isInteger(session.option_layout_id) || session.option_layout_id < 0 || session.option_layout_id >= OPTION_LAYOUT_COUNT ||
       session.next_testlet_ordinal !== session.completed_testlets ||
       session.response_count !== session.completed_testlets * 3 ||
+      (session.practice_completed_at === null &&
+        (session.completed_testlets !== 0 || session.response_count !== 0 || session.breaks_completed !== 0)) ||
+      (session.practice_completed_at !== null &&
+        (!SERVER_ISO_UTC_PATTERN.test(session.practice_completed_at) || !Number.isFinite(Date.parse(session.practice_completed_at)))) ||
       session.completed_testlets < 0 || session.completed_testlets > TOTAL_TESTLETS ||
       session.breaks_completed < 0 || session.breaks_completed > TOTAL_BREAKS) {
     throw new Error("Invalid persisted session counters");
@@ -1498,11 +1529,56 @@ async function nextRuntimeTestlet(env: Env, session: SessionRow): Promise<Runtim
   return row;
 }
 
+export function minimumBreakSeconds(afterModule: number): number {
+  if (!Number.isInteger(afterModule) || afterModule < 1 || afterModule > TOTAL_BREAKS) {
+    throw new Error("Invalid module break ordinal");
+  }
+  return afterModule === MIDPOINT_BREAK_AFTER_MODULE ? MIDPOINT_BREAK_SECONDS : STANDARD_BREAK_SECONDS;
+}
+
+function serverIsoEpochMs(value: string): number {
+  if (!SERVER_ISO_UTC_PATTERN.test(value)) throw new Error("Invalid persisted server timestamp");
+  const epochMs = Date.parse(value);
+  if (!Number.isFinite(epochMs)) throw new Error("Invalid persisted server timestamp");
+  return epochMs;
+}
+
+async function moduleBreakState(
+  env: Env,
+  sessionId: string,
+  afterModule: number,
+  nowMs = Date.now()
+): Promise<JsonObject> {
+  const start = await env.DB.prepare(`
+    SELECT occurred_at
+    FROM session_events
+    WHERE session_id = ? AND event_type = 'testlet_submitted' AND event_ordinal = ?
+  `).bind(sessionId, afterModule * 10 - 1).first<{ occurred_at: string }>();
+  if (!start) throw new Error("Missing module-final server receipt event");
+  const minimumSeconds = minimumBreakSeconds(afterModule);
+  const continueAvailableAtMs = serverIsoEpochMs(start.occurred_at) + minimumSeconds * 1000;
+  const remainingSeconds = Math.max(0, Math.ceil((continueAvailableAtMs - nowMs) / 1000));
+  return {
+    after_module_position: afterModule,
+    before_module_position: afterModule + 1,
+    minimum_break_seconds: minimumSeconds,
+    remaining_break_seconds: remainingSeconds,
+    continue_available_at: new Date(continueAvailableAtMs).toISOString(),
+    break_policy_definition: BREAK_POLICY_DEFINITION
+  };
+}
+
 async function statePayload(env: Env, session: SessionRow): Promise<JsonObject> {
   assertSessionCounters(session);
   let nextStep: JsonObject;
   if (session.status === "completed") {
     nextStep = { kind: "completed" };
+  } else if (session.practice_completed_at === null) {
+    nextStep = {
+      kind: "practice",
+      practice_definition: PRACTICE_DEFINITION,
+      responses_persisted: false
+    };
   } else if (session.completed_testlets === TOTAL_TESTLETS) {
     if (session.response_count !== TOTAL_RESPONSES || session.breaks_completed !== TOTAL_BREAKS) {
       throw new Error("Invalid completion-ready counters");
@@ -1511,10 +1587,10 @@ async function statePayload(env: Env, session: SessionRow): Promise<JsonObject> 
   } else {
     const requiredBreaks = Math.min(TOTAL_BREAKS, Math.floor(session.completed_testlets / 10));
     if (session.breaks_completed < requiredBreaks) {
+      const afterModule = session.breaks_completed + 1;
       nextStep = {
         kind: "break",
-        after_module_position: session.breaks_completed + 1,
-        before_module_position: session.breaks_completed + 2
+        ...(await moduleBreakState(env, session.session_id, afterModule))
       };
     } else {
       const row = await nextRuntimeTestlet(env, session);
@@ -1648,7 +1724,7 @@ async function handleConfig(env: Env): Promise<Response> {
     release_integrity_verified: releaseIntegrityVerified,
     activation_preflight_ready: activationPreflightReady,
     release_binding_sha256: releaseBindingSha256,
-    protocol_version: "uvlt-fixed-ab-worker-v1",
+    protocol_version: FIELD_WORKER_PROTOCOL_VERSION,
     total_testlets: TOTAL_TESTLETS,
     total_item_responses: TOTAL_RESPONSES,
     required_breaks: TOTAL_BREAKS,
@@ -1658,7 +1734,10 @@ async function handleConfig(env: Env): Promise<Response> {
     retain_server_committed_partial_responses: true,
     protocol_completion_definition: PROTOCOL_COMPLETION_DEFINITION,
     partial_response_retention_definition: PARTIAL_RESPONSE_RETENTION_DEFINITION,
-    practice_enabled: false,
+    practice_enabled: true,
+    practice_responses_persisted: false,
+    administration_policy: ADMINISTRATION_POLICY,
+    administration_policy_sha256: ADMINISTRATION_POLICY_SHA256,
     prolific_entry_path: "/join"
   });
 }
@@ -1675,11 +1754,85 @@ async function handleState(request: Request, env: Env): Promise<Response> {
   return jsonResponse(await statePayload(env, session));
 }
 
+async function handlePracticeComplete(request: Request, env: Env): Promise<Response> {
+  requireSameOrigin(request);
+  const body = await readBoundedJson(request, 256);
+  assertExactKeys(body, ["practice_definition"]);
+  if (body.practice_definition !== PRACTICE_DEFINITION) {
+    httpError(400, "INVALID_PRACTICE", "The interface practice completion was not valid.");
+  }
+  const canonical = { practice_definition: PRACTICE_DEFINITION };
+  const payloadHash = await sha256Hex(stableJson(canonical));
+  const session = await authenticateSession(request, env);
+  const existing = await env.DB.prepare(`
+    SELECT payload_sha256, occurred_at
+    FROM session_events
+    WHERE session_id = ? AND event_type = 'practice_completed' AND event_ordinal = 0
+  `).bind(session.session_id).first<{ payload_sha256: string; occurred_at: string }>();
+  if (existing) {
+    if (existing.payload_sha256 !== payloadHash || !SERVER_ISO_UTC_PATTERN.test(existing.occurred_at)) {
+      httpError(409, "PRACTICE_CONFLICT", "The interface practice conflicts with a saved event.");
+    }
+    if (session.practice_completed_at === null) {
+      const recovered = await env.DB.prepare(`
+        UPDATE sessions SET practice_completed_at = ?, updated_at = ?
+        WHERE session_id = ? AND status = 'in_progress' AND practice_completed_at IS NULL AND
+          next_testlet_ordinal = 0 AND completed_testlets = 0 AND response_count = 0 AND breaks_completed = 0
+      `).bind(existing.occurred_at, existing.occurred_at, session.session_id).run();
+      if (recovered.meta.changes !== 1) {
+        httpError(409, "PRACTICE_CONFLICT", "The interface practice could not be confirmed because the session changed.", true);
+      }
+    }
+    const fresh = await authenticateSession(request, env);
+    return jsonResponse(await statePayload(env, fresh));
+  }
+  if (session.status !== "in_progress") {
+    httpError(409, "SESSION_COMPLETED", "This study session is already complete.");
+  }
+  if (session.practice_completed_at !== null || session.next_testlet_ordinal !== 0 ||
+      session.completed_testlets !== 0 || session.response_count !== 0 || session.breaks_completed !== 0) {
+    httpError(409, "PRACTICE_OUT_OF_ORDER", "The interface practice can only be completed before the first testlet.");
+  }
+  const now = new Date().toISOString();
+  try {
+    const results = await env.DB.batch([
+      env.DB.prepare(`
+        INSERT INTO session_events (event_id, session_id, event_type, event_ordinal, payload_sha256, occurred_at)
+        VALUES (?, ?, 'practice_completed', 0, ?, ?)
+      `).bind(crypto.randomUUID(), session.session_id, payloadHash, now),
+      env.DB.prepare(`
+        UPDATE sessions SET practice_completed_at = ?, updated_at = ?
+        WHERE session_id = ? AND status = 'in_progress' AND practice_completed_at IS NULL AND
+          next_testlet_ordinal = 0 AND completed_testlets = 0 AND response_count = 0 AND breaks_completed = 0
+      `).bind(now, now, session.session_id)
+    ]);
+    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1) {
+      throw new Error("Practice completion transaction did not change one row per statement");
+    }
+  } catch {
+    const raced = await env.DB.prepare(`
+      SELECT payload_sha256 FROM session_events
+      WHERE session_id = ? AND event_type = 'practice_completed' AND event_ordinal = 0
+    `).bind(session.session_id).first<{ payload_sha256: string }>();
+    if (!raced || raced.payload_sha256 !== payloadHash) {
+      httpError(409, "PRACTICE_CONFLICT", "The interface practice could not be confirmed because the session changed.", true);
+    }
+  }
+  const fresh = await authenticateSession(request, env);
+  if (fresh.practice_completed_at === null) {
+    throw new Error("Practice completion transaction was not confirmed");
+  }
+  return jsonResponse(await statePayload(env, fresh));
+}
+
 async function handleTestletResponse(request: Request, env: Env): Promise<Response> {
   requireSameOrigin(request);
   const body = parseTestletSubmission(await readBoundedJson(request, 4096));
   const session = await authenticateSession(request, env);
   if (session.status !== "in_progress") httpError(409, "SESSION_COMPLETED", "This study session is already complete.");
+  if (session.practice_completed_at === null) {
+    httpError(409, "PRACTICE_REQUIRED", "The interface practice must be completed first.");
+  }
 
   const canonical = {
     elapsed_ms: body.elapsedMs,
@@ -1721,7 +1874,8 @@ async function handleTestletResponse(request: Request, env: Env): Promise<Respon
       )
       SELECT session_id, ?, ?, ?, ?, ?, ?, ?, ?, ?
       FROM sessions
-      WHERE session_id = ? AND status = 'in_progress' AND next_testlet_ordinal = ? AND breaks_completed = ?
+      WHERE session_id = ? AND status = 'in_progress' AND practice_completed_at IS NOT NULL AND
+        next_testlet_ordinal = ? AND breaks_completed = ?
     `).bind(
       body.testletOrdinal, runtimeTestlet.testletId, session.option_layout_id, body.idempotencyKey, payloadHash,
       body.clientStartedAt, body.clientSubmittedAt, body.elapsedMs, now,
@@ -1785,24 +1939,36 @@ async function handleBreakComplete(request: Request, env: Env): Promise<Response
   `).bind(session.session_id, afterModule).first<{ payload_sha256: string }>();
   if (existing) {
     if (existing.payload_sha256 !== payloadHash) httpError(409, "BREAK_CONFLICT", "The break conflicts with a saved event.");
-    return jsonResponse(await statePayload(env, session));
+    const fresh = await authenticateSession(request, env);
+    return jsonResponse(await statePayload(env, fresh));
   }
   if (afterModule !== session.breaks_completed + 1 || session.next_testlet_ordinal !== afterModule * 10) {
     httpError(409, "BREAK_OUT_OF_ORDER", "Only the required module break can be completed.");
   }
+  const timing = await moduleBreakState(env, session.session_id, afterModule);
+  if ((timing.remaining_break_seconds as number) > 0) {
+    httpError(409, "BREAK_NOT_READY", "The minimum module break has not yet elapsed.", true);
+  }
   const now = new Date().toISOString();
   try {
-    await env.DB.batch([
-      env.DB.prepare(`
-        UPDATE sessions SET breaks_completed = breaks_completed + 1, updated_at = ?
-        WHERE session_id = ? AND status = 'in_progress' AND breaks_completed = ? AND next_testlet_ordinal = ?
-      `).bind(now, session.session_id, afterModule - 1, afterModule * 10),
+    const results = await env.DB.batch([
       env.DB.prepare(`
         INSERT INTO session_events (event_id, session_id, event_type, event_ordinal, payload_sha256, occurred_at)
-        SELECT ?, session_id, 'break_completed', ?, ?, ?
-        FROM sessions WHERE session_id = ? AND breaks_completed = ?
-      `).bind(crypto.randomUUID(), afterModule, payloadHash, now, session.session_id, afterModule)
+        VALUES (?, ?, 'break_completed', ?, ?, ?)
+      `).bind(crypto.randomUUID(), session.session_id, afterModule, payloadHash, now),
+      env.DB.prepare(`
+        UPDATE sessions SET breaks_completed = breaks_completed + 1, updated_at = ?
+        WHERE session_id = ? AND status = 'in_progress' AND practice_completed_at IS NOT NULL AND
+          breaks_completed = ? AND next_testlet_ordinal = ? AND EXISTS (
+            SELECT 1 FROM session_events e
+            WHERE e.session_id = sessions.session_id AND e.event_type = 'break_completed' AND
+              e.event_ordinal = ? AND e.payload_sha256 = ?
+          )
+      `).bind(now, session.session_id, afterModule - 1, afterModule * 10, afterModule, payloadHash)
     ]);
+    if (results[0].meta.changes !== 1 || results[1].meta.changes !== 1) {
+      throw new Error("Break completion transaction did not change one row per statement");
+    }
   } catch {
     const raced = await env.DB.prepare(`
       SELECT payload_sha256 FROM session_events
@@ -1840,6 +2006,7 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
   assertSessionCounters(session);
   const counts = await env.DB.prepare(`
     SELECT
+      (SELECT COUNT(*) FROM session_events e WHERE e.session_id = ? AND e.event_type = 'practice_completed') AS practice_count,
       (SELECT COUNT(*) FROM testlet_submissions ts WHERE ts.session_id = ?) AS submission_count,
       (SELECT COUNT(*) FROM responses r WHERE r.session_id = ?) AS response_count,
       (SELECT COUNT(*) FROM session_events e WHERE e.session_id = ? AND e.event_type = 'break_completed') AS break_count,
@@ -1853,11 +2020,12 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
       (SELECT COUNT(*) FROM testlet_submissions ts
         WHERE ts.session_id = ? AND ts.option_layout_id <> ?) AS invalid_option_layout_submission_count
   `).bind(
-    session.session_id, session.session_id, session.session_id,
+    session.session_id, session.session_id, session.session_id, session.session_id,
     session.release_id, session.route_id, session.session_id,
     session.session_id, session.option_layout_id
   ).first<CompletionCountsRow>();
-  if (!counts || session.completed_testlets !== TOTAL_TESTLETS || session.next_testlet_ordinal !== TOTAL_TESTLETS ||
+  if (!counts || session.practice_completed_at === null || counts.practice_count !== 1 ||
+      session.completed_testlets !== TOTAL_TESTLETS || session.next_testlet_ordinal !== TOTAL_TESTLETS ||
       session.response_count !== TOTAL_RESPONSES || session.breaks_completed !== TOTAL_BREAKS ||
       counts.submission_count !== TOTAL_TESTLETS || counts.response_count !== TOTAL_RESPONSES ||
       counts.break_count !== TOTAL_BREAKS || counts.invalid_route_submission_count !== 0 ||
@@ -1865,12 +2033,12 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
     httpError(409, "SESSION_INCOMPLETE", "The full response and break record has not yet been verified.");
   }
   const now = new Date().toISOString();
-  const payloadHash = await sha256Hex("uvlt-fixed-ab:v1:session_completed:100:300:9");
+  const payloadHash = await sha256Hex("uvlt-fixed-ab:v2:session_completed:practice:100:300:9:8x45s+90s");
   try {
     await env.DB.batch([
       env.DB.prepare(`
         UPDATE sessions SET status = 'completed', completed_at = ?, completion_issued_at = ?, updated_at = ?
-        WHERE session_id = ? AND status = 'in_progress' AND completed_testlets = 100 AND
+        WHERE session_id = ? AND status = 'in_progress' AND practice_completed_at IS NOT NULL AND completed_testlets = 100 AND
           next_testlet_ordinal = 100 AND response_count = 300 AND breaks_completed = 9
       `).bind(now, now, now, session.session_id),
       env.DB.prepare(`
@@ -1957,6 +2125,10 @@ async function dispatch(request: Request, env: Env): Promise<Response> {
       if (request.method !== "GET") return methodNotAllowed("GET");
       return handleState(request, env);
     }
+    if (url.pathname === "/api/session/practice-complete") {
+      if (request.method !== "POST") return methodNotAllowed("POST");
+      return handlePracticeComplete(request, env);
+    }
     if (url.pathname === "/api/session/testlet-response") {
       if (request.method !== "POST") return methodNotAllowed("POST");
       return handleTestletResponse(request, env);
@@ -1977,7 +2149,8 @@ async function dispatch(request: Request, env: Env): Promise<Response> {
 function routeLabel(pathname: string): string {
   const known = new Set([
     "/join", "/recruitment-closed", "/api/config", "/api/session/state",
-    "/api/session/testlet-response", "/api/session/break-complete", "/api/session/complete"
+    "/api/session/practice-complete", "/api/session/testlet-response",
+    "/api/session/break-complete", "/api/session/complete"
   ]);
   if (known.has(pathname)) return pathname;
   return pathname.startsWith("/api/") ? "unknown_api" : "static";

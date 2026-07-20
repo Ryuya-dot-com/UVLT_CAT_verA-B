@@ -1,6 +1,17 @@
 import {
+  INTERFACE_PRACTICE_DEFINITION,
+  breakTiming,
+  createUnsubmittedResponseGuard,
+  formatBreakCountdown,
+  mainSubmissionConfirmed,
+  renderBreakPanel,
+  renderInterfacePracticePanel,
+  renderReadinessPanel,
+  renderSafePausePanel,
   renderTestletPanel,
   selectedOptionStrings,
+  selectedPracticeSymbols,
+  validatePracticeSelections,
   validateSelections
 } from "/field-task.js";
 
@@ -11,6 +22,9 @@ const API_TIMEOUT_MS = 20_000;
 
 let currentState = null;
 let pendingSubmission = null;
+let readinessAcknowledged = false;
+let breakCountdownInterval = null;
+const unsubmittedResponseGuard = createUnsubmittedResponseGuard(window);
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -21,11 +35,17 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function clearBreakCountdown() {
+  if (breakCountdownInterval === null) return;
+  window.clearInterval(breakCountdownInterval);
+  breakCountdownInterval = null;
+}
+
 function renderProgress(stage) {
   const stages = ["start", "study", "complete"];
   const current = Math.max(0, stages.indexOf(stage));
   const steps = [
-    ["Step 1", "Secure start"],
+    ["Step 1", "Get ready"],
     ["Step 2", "Vocabulary study"],
     ["Step 3", "Return to Prolific"]
   ];
@@ -60,7 +80,16 @@ function setTestletControlsDisabled(disabled) {
   if (button) button.disabled = disabled;
 }
 
+function setPracticeControlsDisabled(disabled) {
+  root.querySelectorAll('input[type="radio"]').forEach(input => {
+    input.disabled = disabled;
+  });
+  const button = root.querySelector("#complete-interface-practice");
+  if (button) button.disabled = disabled;
+}
+
 function renderMessage(title, message, { danger = false, retry = false, busy = false, focus = true } = {}) {
+  clearBreakCountdown();
   renderProgress("start");
   root.setAttribute("aria-busy", String(busy));
   root.innerHTML = `<section class="task-panel">
@@ -151,13 +180,15 @@ async function refreshState() {
 }
 
 function applyConfirmedState(state) {
+  pendingSubmission = null;
+  unsubmittedResponseGuard.setActive(false);
+  clearBreakCountdown();
   currentState = state;
   updateSaveState(currentState);
   renderState();
 }
 
 async function recoverFromStaleState(onFailure) {
-  pendingSubmission = null;
   try {
     await refreshState();
     return true;
@@ -167,13 +198,110 @@ async function recoverFromStaleState(onFailure) {
   }
 }
 
+async function reconcileTestletConflict(step, message) {
+  try {
+    const state = await api("/api/session/state");
+    if (mainSubmissionConfirmed(state, step.testlet_ordinal)) {
+      applyConfirmedState(state);
+      return;
+    }
+
+    currentState = state;
+    updateSaveState(currentState);
+    root.setAttribute("aria-busy", "false");
+    const next = state?.next_step;
+    const sameTestlet = next?.kind === "testlet" &&
+      next.testlet_ordinal === step.testlet_ordinal;
+    setTestletControlsDisabled(pendingSubmission !== null);
+    const retryButton = root.querySelector("#submit-testlet");
+    if (retryButton) retryButton.disabled = false;
+    unsubmittedResponseGuard.setActive(true);
+    showFormMessage(
+      message,
+      sameTestlet
+        ? "The server has not confirmed this set. Your selections are preserved; press Save and continue to retry the same response."
+        : "The server could not confirm that this set was saved. Your selections are preserved in this tab; try again or contact the researcher through Prolific.",
+      { assertive: true, focus: true }
+    );
+  } catch (error) {
+    root.setAttribute("aria-busy", "false");
+    setTestletControlsDisabled(pendingSubmission !== null);
+    const retryButton = root.querySelector("#submit-testlet");
+    if (retryButton) retryButton.disabled = false;
+    unsubmittedResponseGuard.setActive(true);
+    showFormMessage(
+      message,
+      `${error.message} Your unconfirmed selections are preserved in this tab.`,
+      { assertive: true, focus: true }
+    );
+  }
+}
+
+function renderReadiness() {
+  clearBreakCountdown();
+  unsubmittedResponseGuard.setActive(false);
+  renderProgress("start");
+  root.setAttribute("aria-busy", "false");
+  root.innerHTML = renderReadinessPanel();
+  focusMainHeading();
+  root.querySelector("#begin-interface-practice").addEventListener("click", () => {
+    readinessAcknowledged = true;
+    renderInterfacePractice();
+  });
+}
+
+function renderInterfacePractice() {
+  clearBreakCountdown();
+  unsubmittedResponseGuard.setActive(false);
+  renderProgress("start");
+  root.setAttribute("aria-busy", "false");
+  root.innerHTML = renderInterfacePracticePanel();
+  const button = root.querySelector("#complete-interface-practice");
+  focusMainHeading();
+  button.addEventListener("click", async () => {
+    const message = root.querySelector("#practice-message");
+    const selections = selectedPracticeSymbols(root);
+    const validation = validatePracticeSelections(selections);
+    if (!validation.valid) {
+      showFormMessage(message, validation.message, { assertive: true, focus: true });
+      return;
+    }
+    setPracticeControlsDisabled(true);
+    root.setAttribute("aria-busy", "true");
+    showFormMessage(message, "Recording completion of the interface practice…");
+    try {
+      applyConfirmedState(await api("/api/session/practice-complete", {
+        method: "POST",
+        body: { practice_definition: INTERFACE_PRACTICE_DEFINITION }
+      }));
+    } catch (error) {
+      root.setAttribute("aria-busy", "false");
+      if (error.status === 409) {
+        await recoverFromStaleState(refreshError => {
+          setPracticeControlsDisabled(false);
+          showFormMessage(message, refreshError.message, { assertive: true, focus: true });
+        });
+        return;
+      }
+      setPracticeControlsDisabled(false);
+      showFormMessage(message, error.retryable
+        ? "Practice completion was not confirmed. Your practice choices remain on this screen; try again."
+        : error.message, { assertive: true, focus: true });
+    }
+  });
+}
+
 function renderTestlet(step) {
+  clearBreakCountdown();
   renderProgress("study");
   root.setAttribute("aria-busy", "false");
   const startedAt = new Date().toISOString();
   const startedMonotonic = performance.now();
   root.innerHTML = renderTestletPanel(step);
   const button = root.querySelector("#submit-testlet");
+  root.querySelectorAll('input[type="radio"][data-item-index]').forEach(input => {
+    input.addEventListener("change", () => unsubmittedResponseGuard.setActive(true));
+  });
   focusMainHeading();
   button.addEventListener("click", async () => {
     const message = root.querySelector("#response-message");
@@ -183,6 +311,7 @@ function renderTestlet(step) {
       showFormMessage(message, validation.message, { assertive: true, focus: true });
       return;
     }
+    unsubmittedResponseGuard.setActive(true);
     if (pendingSubmission && pendingSubmission.testlet_ordinal !== step.testlet_ordinal) {
       await recoverFromStaleState(error => {
         setTestletControlsDisabled(false);
@@ -193,7 +322,6 @@ function renderTestlet(step) {
     if (!pendingSubmission) {
       pendingSubmission = {
         testlet_ordinal: step.testlet_ordinal,
-        phase: step.phase || "main",
         selected_options: selections,
         testlet_started_at: startedAt,
         testlet_submitted_at: new Date().toISOString(),
@@ -205,19 +333,14 @@ function renderTestlet(step) {
     root.setAttribute("aria-busy", "true");
     showFormMessage(message, "Saving securely…");
     try {
-      const confirmedState = await api("/api/session/testlet-response", {
+      applyConfirmedState(await api("/api/session/testlet-response", {
         method: "POST",
         body: pendingSubmission
-      });
-      pendingSubmission = null;
-      applyConfirmedState(confirmedState);
+      }));
     } catch (error) {
       root.setAttribute("aria-busy", "false");
       if (error.status === 409) {
-        await recoverFromStaleState(refreshError => {
-          setTestletControlsDisabled(false);
-          showFormMessage(message, refreshError.message, { assertive: true, focus: true });
-        });
+        await reconcileTestletConflict(step, message);
         return;
       }
       button.disabled = false;
@@ -234,62 +357,125 @@ function renderTestlet(step) {
   });
 }
 
-function renderBreak(step) {
+function renderSafePause() {
+  clearBreakCountdown();
+  unsubmittedResponseGuard.setActive(false);
   renderProgress("study");
   root.setAttribute("aria-busy", "false");
-  root.innerHTML = `<section class="task-panel break-card">
-    <div class="break-mark">Ⅱ</div>
-    <p class="eyebrow">Required module boundary</p>
-    <h1>Module ${escapeHtml(step.after_module_position)} is complete</h1>
-    <p class="lead">Please take a short break before starting Module ${escapeHtml(step.before_module_position)}.</p>
-    <label class="check-field break-confirmation">
-      <input id="break-confirmation" type="checkbox">
-      <span>I took a break and am ready to continue.</span>
-    </label>
-    <p class="form-message" id="break-message" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
-    <div class="button-row">
-      <button class="primary-button" id="continue-after-break" type="button">Start Module ${escapeHtml(step.before_module_position)}</button>
-    </div>
-  </section>`;
+  root.innerHTML = renderSafePausePanel(currentState);
+  const message = root.querySelector("#pause-message");
+  const button = root.querySelector("#resume-from-safe-pause");
   focusMainHeading();
-  root.querySelector("#continue-after-break").addEventListener("click", async event => {
-    const message = root.querySelector("#break-message");
-    if (!root.querySelector("#break-confirmation").checked) {
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    root.setAttribute("aria-busy", "true");
+    showFormMessage(message, "Refreshing your saved study state…");
+    try {
+      await refreshState();
+    } catch (error) {
+      root.setAttribute("aria-busy", "false");
+      button.disabled = false;
+      showFormMessage(message, error.message, { assertive: true, focus: true });
+    }
+  });
+}
+
+function renderBreak(step) {
+  clearBreakCountdown();
+  unsubmittedResponseGuard.setActive(false);
+  const timing = breakTiming(step);
+  if (timing === null) {
+    renderMessage("Study state unavailable", "The server did not provide a valid required-break state.", { danger: true, retry: true });
+    return;
+  }
+  renderProgress("study");
+  root.setAttribute("aria-busy", "false");
+  root.innerHTML = renderBreakPanel(step);
+  const message = root.querySelector("#break-message");
+  const countdown = root.querySelector("#break-countdown");
+  const announcement = root.querySelector("#break-ready-announcement");
+  const confirmation = root.querySelector("#break-confirmation");
+  const pauseButton = root.querySelector("#pause-at-break");
+  const continueButton = root.querySelector("#continue-after-break");
+  const deadline = Date.parse(timing.availableAt);
+  let advisoryRemaining = -1;
+  let readyAnnounced = false;
+  let submitting = false;
+
+  const updateCountdown = () => {
+    const next = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+    if (next !== advisoryRemaining) {
+      advisoryRemaining = next;
+      countdown.textContent = formatBreakCountdown(advisoryRemaining);
+    }
+    if (advisoryRemaining === 0) {
+      if (!readyAnnounced) {
+        announcement.textContent = "The minimum break is complete. Continue when ready.";
+        readyAnnounced = true;
+      }
+      continueButton.disabled = submitting;
+      clearBreakCountdown();
+    }
+  };
+
+  updateCountdown();
+  if (advisoryRemaining > 0) {
+    breakCountdownInterval = window.setInterval(updateCountdown, 250);
+  }
+  focusMainHeading();
+  pauseButton.addEventListener("click", renderSafePause);
+  continueButton.addEventListener("click", async () => {
+    updateCountdown();
+    if (advisoryRemaining > 0) {
+      showFormMessage(message, "The server-set minimum break has not finished yet.", { assertive: true, focus: true });
+      return;
+    }
+    if (!confirmation.checked) {
       showFormMessage(message, "Confirm that you took the required break before continuing.", { assertive: true, focus: true });
       return;
     }
-    event.currentTarget.disabled = true;
+    submitting = true;
+    continueButton.disabled = true;
+    pauseButton.disabled = true;
+    confirmation.disabled = true;
     root.setAttribute("aria-busy", "true");
-    showFormMessage(message, "Saving the break confirmation…");
+    showFormMessage(message, "Asking the study server to verify the break…");
     try {
-      const confirmedState = await api("/api/session/break-complete", {
+      applyConfirmedState(await api("/api/session/break-complete", {
         method: "POST",
-        body: { after_module_position: step.after_module_position }
-      });
-      applyConfirmedState(confirmedState);
+        body: { after_module_position: timing.afterModule }
+      }));
     } catch (error) {
       root.setAttribute("aria-busy", "false");
       if (error.status === 409) {
         await recoverFromStaleState(refreshError => {
-          event.currentTarget.disabled = false;
+          submitting = false;
+          continueButton.disabled = advisoryRemaining > 0;
+          pauseButton.disabled = false;
+          confirmation.disabled = false;
           showFormMessage(message, refreshError.message, { assertive: true, focus: true });
         });
         return;
       }
-      event.currentTarget.disabled = false;
+      submitting = false;
+      continueButton.disabled = advisoryRemaining > 0;
+      pauseButton.disabled = false;
+      confirmation.disabled = false;
       showFormMessage(message, error.message, { assertive: true, focus: true });
     }
   });
 }
 
 function renderCompletionReady() {
+  clearBreakCountdown();
+  unsubmittedResponseGuard.setActive(false);
   renderProgress("complete");
   root.setAttribute("aria-busy", "false");
   root.innerHTML = `<section class="task-panel completion-card">
     <div class="completion-mark">✓</div>
     <p class="eyebrow">Responses saved</p>
     <h1>Finish the study</h1>
-    <p class="lead">Your completion link is issued only after the server verifies all required responses and breaks.</p>
+    <p class="lead">Your completion link is issued only after the server verifies all required responses, the interface-practice completion, and all breaks.</p>
     <p class="form-message" id="completion-message" role="status" aria-live="polite" aria-atomic="true" tabindex="-1"></p>
     <div class="button-row"><button class="primary-button" id="complete-study" type="button">Verify and return to Prolific</button></div>
   </section>`;
@@ -324,6 +510,10 @@ function renderState() {
     renderMessage("Study state unavailable", "The server did not provide a valid next step.", { danger: true, retry: true });
     return;
   }
+  if (step.kind === "practice") {
+    if (!readinessAcknowledged) return renderReadiness();
+    return renderInterfacePractice();
+  }
   if (step.kind === "testlet") return renderTestlet(step);
   if (step.kind === "break") return renderBreak(step);
   if (step.kind === "complete_ready" || step.kind === "completed") return renderCompletionReady();
@@ -331,7 +521,10 @@ function renderState() {
 }
 
 async function initialise() {
+  clearBreakCountdown();
   pendingSubmission = null;
+  readinessAcknowledged = false;
+  unsubmittedResponseGuard.setActive(false);
   updateSaveState(null);
   if (window.location.pathname === "/recruitment-closed") {
     progressRoot.hidden = true;
@@ -366,13 +559,16 @@ async function initialise() {
 
 window.addEventListener("pageshow", event => {
   if (!event.persisted) return;
-  if (pendingSubmission && root.querySelector("#response-message")) {
+  if (unsubmittedResponseGuard.isActive() && root.querySelector("#response-message")) {
     root.setAttribute("aria-busy", "false");
+    setTestletControlsDisabled(pendingSubmission !== null);
     const button = root.querySelector("#submit-testlet");
     if (button) button.disabled = false;
     showFormMessage(
       root.querySelector("#response-message"),
-      "This page was restored before the previous save was confirmed. Press Save and continue to verify the same response safely.",
+      pendingSubmission
+        ? "This page was restored before the previous save was confirmed. Press Save and continue to verify the same response safely."
+        : "This page was restored with unsubmitted selections. Complete the set, then press Save and continue.",
       { assertive: true, focus: true }
     );
     return;

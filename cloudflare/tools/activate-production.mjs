@@ -149,6 +149,7 @@ assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
 "Production activation requires the canonical frozen Worker version ID");
 assert(wrangler.vars?.EXPECTED_RELEASE_ID === release.releaseId &&
   wrangler.vars?.EXPECTED_APP_VERSION === release.appVersion &&
+  wrangler.vars?.EXPECTED_ADMINISTRATION_POLICY_SHA256 === release.expectedHashes?.administrationPolicySha256 &&
   wrangler.vars?.EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256 === release.expectedHashes?.publicBuildManifestSha256 &&
   wrangler.vars?.EXPECTED_RUNTIME_MANIFEST_SHA256 === release.expectedHashes?.runtimeManifestPayloadSha256 &&
   wrangler.vars?.EXPECTED_BANK_SHA256 === release.expectedHashes?.bankPayloadSha256 &&

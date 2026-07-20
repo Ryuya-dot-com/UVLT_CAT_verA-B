@@ -6,6 +6,13 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE runtime_releases (
   release_id TEXT PRIMARY KEY,
   app_version TEXT NOT NULL,
+  administration_policy_json TEXT NOT NULL
+    CHECK (
+      json_valid(administration_policy_json) AND
+      administration_policy_json = '{"breaks":{"backgroundAndReloadTimeCounts":true,"completionDependent":true,"count":9,"definition":"server-minimum-45s-standard-90s-after-module-5-v1","elapsedFrom":"module-final-testlet-server-received-at","midpointAfterModule":5,"midpointMinimumSeconds":90,"serverClockAuthoritative":true,"standardMinimumSeconds":45},"practice":{"completionEventPersisted":true,"definition":"one-synthetic-interface-only-three-row-six-symbol-practice-v1","enabled":true,"feedback":"generic-validity-only","mainResponseCountsAffected":false,"requiredBeforeFirstMainTestlet":true,"responsesPersisted":false},"preparation":{"definition":"single-readiness-screen-before-interface-practice-v1","responsePersisted":false},"processData":{"breakTiming":"derived-from-module-final-server-receipt-and-break-event-v1","clientTiming":"wall-start-submit-plus-monotonic-testlet-elapsed-v1","focusVisibilityEventsPersisted":false,"qualityFlagsComputedAtRuntime":false,"rawInputEventsPersisted":false,"schemaVersion":"uvlt-fixed-ab-process-data-1","unsubmittedSelectionsPersisted":false},"progress":{"definition":"neutral-module-set-and-server-committed-count-v1","showsEstimatedTime":false,"showsOtherParticipantComparison":false,"showsScore":false,"showsSpeed":false},"safeInterruption":{"availableAt":"required-break-screens-only","definition":"break-boundary-guidance-without-server-event-v1","prolificTimerContinues":true},"schemaVersion":"uvlt-fixed-ab-administration-policy-1","unsavedResponseGuard":{"definition":"beforeunload-only-after-main-selection-until-server-confirmation-v1","transmitsUnsubmittedSelections":false}}'
+    ),
+  administration_policy_sha256 TEXT NOT NULL
+    CHECK (administration_policy_sha256 = '55588091b7c85cf698e076283503c663eaacf77540d3ec9d03abf5b06b229b43'),
   worker_version_id TEXT
     CHECK (worker_version_id IS NULL OR (
       length(worker_version_id) = 36 AND
@@ -68,7 +75,7 @@ CREATE TABLE runtime_releases (
   retain_server_committed_partial_responses INTEGER NOT NULL
     CHECK (retain_server_committed_partial_responses = 1),
   protocol_completion_definition TEXT NOT NULL
-    CHECK (protocol_completion_definition = 'd1-completed-after-100-testlets-300-responses-9-breaks-v1'),
+    CHECK (protocol_completion_definition = 'd1-completed-after-practice-100-testlets-300-responses-8x45s-plus-midpoint90s-breaks-v2'),
   partial_response_retention_definition TEXT NOT NULL
     CHECK (partial_response_retention_definition = 'consented-nonwithdrawn-server-committed-complete-testlets-v1'),
   expected_testlets INTEGER NOT NULL DEFAULT 100 CHECK (expected_testlets = 100),
@@ -183,6 +190,14 @@ CREATE TABLE sessions (
     CHECK (length(token_sha256) = 64 AND token_sha256 NOT GLOB '*[^0-9a-f]*'),
   token_expires_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed')),
+  practice_completed_at TEXT
+    CHECK (practice_completed_at IS NULL OR (
+      length(practice_completed_at) = 24 AND
+      substr(practice_completed_at, 20, 1) = '.' AND
+      substr(practice_completed_at, 24, 1) = 'Z' AND
+      substr(practice_completed_at, 21, 3) NOT GLOB '*[^0-9]*' AND
+      strftime('%s', substr(practice_completed_at, 1, 19) || 'Z') IS NOT NULL
+    )),
   next_testlet_ordinal INTEGER NOT NULL DEFAULT 0 CHECK (next_testlet_ordinal BETWEEN 0 AND 100),
   completed_testlets INTEGER NOT NULL DEFAULT 0 CHECK (completed_testlets BETWEEN 0 AND 100),
   response_count INTEGER NOT NULL DEFAULT 0 CHECK (response_count BETWEEN 0 AND 300),
@@ -193,9 +208,12 @@ CREATE TABLE sessions (
   completion_issued_at TEXT,
   CHECK (next_testlet_ordinal = completed_testlets),
   CHECK (response_count = completed_testlets * 3),
+  CHECK (practice_completed_at IS NOT NULL OR
+    (next_testlet_ordinal = 0 AND completed_testlets = 0 AND response_count = 0 AND breaks_completed = 0)),
   CHECK ((status = 'completed') = (completed_at IS NOT NULL)),
   CHECK (status <> 'completed' OR
-    (next_testlet_ordinal = 100 AND completed_testlets = 100 AND response_count = 300 AND breaks_completed = 9)),
+    (practice_completed_at IS NOT NULL AND next_testlet_ordinal = 100 AND
+      completed_testlets = 100 AND response_count = 300 AND breaks_completed = 9)),
   FOREIGN KEY (release_id) REFERENCES runtime_releases(release_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (study_id, release_id, l1) REFERENCES studies(study_id, release_id, l1)
     ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -281,7 +299,7 @@ CREATE TABLE session_events (
   event_id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   event_type TEXT NOT NULL CHECK (event_type IN (
-    'session_started', 'testlet_submitted', 'break_completed', 'session_completed'
+    'session_started', 'practice_completed', 'testlet_submitted', 'break_completed', 'session_completed'
   )),
   event_ordinal INTEGER NOT NULL CHECK (event_ordinal BETWEEN 0 AND 100),
   payload_sha256 TEXT NOT NULL
@@ -331,6 +349,8 @@ BEGIN
   SELECT CASE WHEN
     NEW.release_id IS NOT OLD.release_id OR
     NEW.app_version IS NOT OLD.app_version OR
+    NEW.administration_policy_json IS NOT OLD.administration_policy_json OR
+    NEW.administration_policy_sha256 IS NOT OLD.administration_policy_sha256 OR
     NEW.worker_version_id IS NOT OLD.worker_version_id OR
     NEW.public_build_manifest_sha256 IS NOT OLD.public_build_manifest_sha256 OR
     NEW.runtime_manifest_sha256 IS NOT OLD.runtime_manifest_sha256 OR
@@ -618,9 +638,118 @@ END;
 
 CREATE TRIGGER sessions_require_in_progress_insert
 BEFORE INSERT ON sessions
-WHEN NEW.status <> 'in_progress'
+WHEN NEW.status <> 'in_progress' OR NEW.practice_completed_at IS NOT NULL
 BEGIN
-  SELECT RAISE(ABORT, 'sessions must begin in progress');
+  SELECT RAISE(ABORT, 'sessions must begin in progress with practice pending');
+END;
+
+CREATE TRIGGER session_events_validate_practice_completion
+BEFORE INSERT ON session_events
+WHEN NEW.event_type = 'practice_completed'
+BEGIN
+  SELECT CASE WHEN
+    NEW.event_ordinal <> 0 OR
+    NEW.payload_sha256 <> '3019d623f610e711463497cc89d13cbaaa73e4a3e075f8962c9255bdcf29c544' OR
+    length(NEW.occurred_at) <> 24 OR
+    substr(NEW.occurred_at, 20, 1) <> '.' OR
+    substr(NEW.occurred_at, 24, 1) <> 'Z' OR
+    substr(NEW.occurred_at, 21, 3) GLOB '*[^0-9]*' OR
+    strftime('%s', substr(NEW.occurred_at, 1, 19) || 'Z') IS NULL OR
+    NOT EXISTS (
+      SELECT 1 FROM sessions s
+      WHERE s.session_id = NEW.session_id AND s.status = 'in_progress' AND
+        s.practice_completed_at IS NULL AND s.next_testlet_ordinal = 0 AND
+        s.completed_testlets = 0 AND s.response_count = 0 AND s.breaks_completed = 0
+    )
+  THEN RAISE(ABORT, 'practice completion event is invalid') END;
+END;
+
+CREATE TRIGGER sessions_validate_practice_completion
+BEFORE UPDATE OF practice_completed_at ON sessions
+BEGIN
+  SELECT CASE WHEN
+    OLD.practice_completed_at IS NOT NULL OR
+    NEW.practice_completed_at IS NULL OR
+    NEW.status <> 'in_progress' OR
+    NEW.next_testlet_ordinal <> 0 OR NEW.completed_testlets <> 0 OR
+    NEW.response_count <> 0 OR NEW.breaks_completed <> 0 OR
+    (SELECT COUNT(*) FROM session_events e
+      WHERE e.session_id = NEW.session_id AND e.event_type = 'practice_completed' AND
+        e.event_ordinal = 0 AND e.occurred_at = NEW.practice_completed_at) <> 1
+  THEN RAISE(ABORT, 'practice completion transition is invalid') END;
+END;
+
+CREATE TRIGGER testlet_submissions_require_completed_practice
+BEFORE INSERT ON testlet_submissions
+WHEN NOT EXISTS (
+  SELECT 1 FROM sessions s
+  WHERE s.session_id = NEW.session_id AND s.practice_completed_at IS NOT NULL
+)
+BEGIN
+  SELECT RAISE(ABORT, 'main responses require completed interface practice');
+END;
+
+CREATE TRIGGER session_events_validate_testlet_submission
+BEFORE INSERT ON session_events
+WHEN NEW.event_type = 'testlet_submitted' AND NOT EXISTS (
+  SELECT 1 FROM testlet_submissions ts
+  WHERE ts.session_id = NEW.session_id AND ts.testlet_ordinal = NEW.event_ordinal AND
+    ts.payload_sha256 = NEW.payload_sha256 AND ts.received_at = NEW.occurred_at
+)
+BEGIN
+  SELECT RAISE(ABORT, 'testlet submission event must match its server receipt');
+END;
+
+CREATE TRIGGER session_events_validate_break_completion
+BEFORE INSERT ON session_events
+WHEN NEW.event_type = 'break_completed'
+BEGIN
+  SELECT CASE WHEN
+    NEW.event_ordinal NOT BETWEEN 1 AND 9 OR
+    length(NEW.occurred_at) <> 24 OR
+    substr(NEW.occurred_at, 20, 1) <> '.' OR
+    substr(NEW.occurred_at, 24, 1) <> 'Z' OR
+    substr(NEW.occurred_at, 21, 3) GLOB '*[^0-9]*' OR
+    strftime('%s', substr(NEW.occurred_at, 1, 19) || 'Z') IS NULL OR
+    NOT EXISTS (
+      SELECT 1 FROM sessions s
+      WHERE s.session_id = NEW.session_id AND s.status = 'in_progress' AND
+        s.practice_completed_at IS NOT NULL AND
+        s.breaks_completed = NEW.event_ordinal - 1 AND
+        s.next_testlet_ordinal = NEW.event_ordinal * 10
+    ) OR
+    NOT EXISTS (
+      SELECT 1 FROM session_events start_event
+      WHERE start_event.session_id = NEW.session_id AND
+        start_event.event_type = 'testlet_submitted' AND
+        start_event.event_ordinal = NEW.event_ordinal * 10 - 1 AND
+        length(start_event.occurred_at) = 24 AND
+        substr(start_event.occurred_at, 20, 1) = '.' AND
+        substr(start_event.occurred_at, 24, 1) = 'Z' AND
+        substr(start_event.occurred_at, 21, 3) NOT GLOB '*[^0-9]*' AND
+        strftime('%s', substr(start_event.occurred_at, 1, 19) || 'Z') IS NOT NULL AND
+        (
+          CAST(strftime('%s', substr(NEW.occurred_at, 1, 19) || 'Z') AS INTEGER) * 1000 +
+            CAST(substr(NEW.occurred_at, 21, 3) AS INTEGER) -
+          CAST(strftime('%s', substr(start_event.occurred_at, 1, 19) || 'Z') AS INTEGER) * 1000 -
+            CAST(substr(start_event.occurred_at, 21, 3) AS INTEGER)
+        ) >= CASE WHEN NEW.event_ordinal = 5 THEN 90000 ELSE 45000 END
+    )
+  THEN RAISE(ABORT, 'module break is incomplete or invalid') END;
+END;
+
+CREATE TRIGGER sessions_validate_break_progress
+BEFORE UPDATE OF breaks_completed ON sessions
+WHEN NEW.breaks_completed IS NOT OLD.breaks_completed
+BEGIN
+  SELECT CASE WHEN
+    NEW.status <> 'in_progress' OR
+    NEW.breaks_completed <> OLD.breaks_completed + 1 OR
+    NEW.next_testlet_ordinal <> NEW.breaks_completed * 10 OR
+    (SELECT COUNT(*) FROM session_events e
+      WHERE e.session_id = NEW.session_id AND e.event_type = 'break_completed' AND
+        e.event_ordinal = NEW.breaks_completed) <> 1
+  THEN RAISE(ABORT, 'break progress requires its verified completion event') END;
 END;
 
 CREATE TRIGGER sessions_reject_completion_reversal
@@ -635,6 +764,10 @@ BEFORE UPDATE OF status ON sessions
 WHEN OLD.status = 'in_progress' AND NEW.status = 'completed'
 BEGIN
   SELECT CASE WHEN
+    NEW.practice_completed_at IS NULL OR
+    (SELECT COUNT(*) FROM session_events e
+      WHERE e.session_id = NEW.session_id AND e.event_type = 'practice_completed' AND
+        e.event_ordinal = 0 AND e.occurred_at = NEW.practice_completed_at) <> 1 OR
     (SELECT COUNT(*) FROM testlet_submissions ts
       WHERE ts.session_id = NEW.session_id) <> 100 OR
     (SELECT COUNT(*) FROM responses r
@@ -642,6 +775,22 @@ BEGIN
     (SELECT COUNT(*) FROM session_events e
       WHERE e.session_id = NEW.session_id AND e.event_type = 'break_completed'
         AND e.event_ordinal BETWEEN 1 AND 9) <> 9 OR
+    (SELECT COUNT(*)
+      FROM session_events break_event
+      JOIN session_events start_event
+        ON start_event.session_id = break_event.session_id AND
+          start_event.event_type = 'testlet_submitted' AND
+          start_event.event_ordinal = break_event.event_ordinal * 10 - 1
+      WHERE break_event.session_id = NEW.session_id AND
+        break_event.event_type = 'break_completed' AND
+        break_event.event_ordinal BETWEEN 1 AND 9 AND
+        (
+          CAST(strftime('%s', substr(break_event.occurred_at, 1, 19) || 'Z') AS INTEGER) * 1000 +
+            CAST(substr(break_event.occurred_at, 21, 3) AS INTEGER) -
+          CAST(strftime('%s', substr(start_event.occurred_at, 1, 19) || 'Z') AS INTEGER) * 1000 -
+            CAST(substr(start_event.occurred_at, 21, 3) AS INTEGER)
+        ) >= CASE WHEN break_event.event_ordinal = 5 THEN 90000 ELSE 45000 END
+    ) <> 9 OR
     (SELECT COUNT(*)
       FROM testlet_submissions ts
       LEFT JOIN runtime_route_testlets rr

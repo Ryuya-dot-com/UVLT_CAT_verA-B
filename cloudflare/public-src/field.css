@@ -30,6 +30,49 @@
   text-align: left;
 }
 
+.readiness-list {
+  max-width: 48rem;
+  margin: 1.25rem 0;
+  padding-left: 1.35rem;
+  line-height: 1.65;
+}
+
+.readiness-list li + li {
+  margin-top: .55rem;
+}
+
+.break-policy-note {
+  max-width: 44rem;
+  margin-inline: auto;
+  color: var(--muted);
+  font-size: .88rem;
+}
+
+.break-countdown {
+  display: inline-block;
+  margin: .35rem auto .2rem;
+  padding: .65rem .9rem;
+  border: 1px solid #9acbc5;
+  border-radius: 10px;
+  color: var(--teal-dark);
+  background: var(--mint);
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+.interruption-card {
+  text-align: center;
+  padding-block: clamp(2rem, 7vw, 5rem);
+}
+
+.interruption-card .lead {
+  margin-inline: auto;
+}
+
+.interruption-card .button-row {
+  justify-content: center;
+}
+
 @media (max-width: 760px) {
   .study-progress {
     grid-template-columns: 1fr;

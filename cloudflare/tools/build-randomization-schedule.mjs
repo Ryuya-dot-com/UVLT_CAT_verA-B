@@ -12,6 +12,11 @@ import {
   validateRecruitmentPolicy,
   validateWilliamsRouteBalance
 } from "./randomization-design.mjs";
+import {
+  ADMINISTRATION_POLICY_APPROVAL_GATES,
+  validateAdministrationPolicy,
+  validateAdministrationPolicySha256
+} from "./administration-policy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -131,11 +136,18 @@ const [config, routes] = await Promise.all([
   readJson(routesPath, "Route artifact")
 ]);
 assert(isPlainObject(config), "Release config must be a plain object");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-6",
-  "Randomization schedule generation requires release config schema v6");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-7",
+  "Randomization schedule generation requires release config schema v7");
 validateRecruitmentPolicy(config.recruitmentPolicy);
+validateAdministrationPolicy(config.administrationPolicy);
 assert(typeof config.releaseId === "string", "Release config must contain releaseId");
 assert(isPlainObject(config.expectedHashes), "Release config must contain expectedHashes");
+validateAdministrationPolicySha256(config.expectedHashes.administrationPolicySha256);
+assert(isPlainObject(config.approvals), "Release config must contain approvals");
+for (const gate of ADMINISTRATION_POLICY_APPROVAL_GATES) {
+  assert(typeof config.approvals[gate] === "boolean",
+    `Release config approvals.${gate} must be boolean`);
+}
 assert(typeof config.expectedHashes.routesPayloadSha256 === "string" &&
   /^[0-9a-f]{64}$/u.test(config.expectedHashes.routesPayloadSha256),
 "Release config expectedHashes.routesPayloadSha256 must be a lowercase SHA-256 value");

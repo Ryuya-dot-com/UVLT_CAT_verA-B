@@ -8,17 +8,26 @@ import test from "node:test";
 import { withFrozenActivationInputs } from "../cloudflare/tools/activate-production.mjs";
 import { buildActivationSql } from "../cloudflare/tools/build-activation-sql.mjs";
 import {
+  FIELD_WORKER_PROTOCOL_VERSION,
   releaseBindingSha256,
   validateActivationMutationResult,
   validateActivationReadback,
   validateActiveReleaseReadiness,
   validateInactiveReleasePreflight
 } from "../cloudflare/tools/activation-workflow-validation.mjs";
+import {
+  ADMINISTRATION_POLICY,
+  ADMINISTRATION_POLICY_JSON,
+  ADMINISTRATION_POLICY_SHA256
+} from "../cloudflare/tools/administration-policy.mjs";
+import {
+  PROTOCOL_COMPLETION_DEFINITION
+} from "../cloudflare/tools/randomization-design.mjs";
 
 const nonzero = "1".repeat(64);
 const fingerprint = `sha256:${nonzero}`;
 const completeRelease = Object.freeze({
-  schemaVersion: "uvlt-fixed-ab-field-release-config-6",
+  schemaVersion: "uvlt-fixed-ab-field-release-config-7",
   releaseId: "uvlt-fixed-ab-release-20260720",
   appVersion: "0.1.0-dev",
   workerVersionId: "11111111-1111-4111-8111-111111111111",
@@ -36,10 +45,12 @@ const completeRelease = Object.freeze({
     hardCapStartsPerL1: 420,
     stopNewAllocationsAtTarget: true,
     retainServerCommittedPartialResponses: true,
-    protocolCompletionDefinition: "d1-completed-after-100-testlets-300-responses-9-breaks-v1",
+    protocolCompletionDefinition: PROTOCOL_COMPLETION_DEFINITION,
     partialResponseRetentionDefinition: "consented-nonwithdrawn-server-committed-complete-testlets-v1"
   },
+  administrationPolicy: structuredClone(ADMINISTRATION_POLICY),
   expectedHashes: {
+    administrationPolicySha256: ADMINISTRATION_POLICY_SHA256,
     runtimeManifestPayloadSha256: nonzero,
     bankPayloadSha256: nonzero,
     routesPayloadSha256: nonzero,
@@ -60,6 +71,9 @@ const completeRelease = Object.freeze({
     privateWorkspaceApprovalRecorded: true,
     randomizationScheduleReviewRecorded: true,
     attritionReplacementPolicyRecorded: true,
+    administrationPolicyIndependentReviewRecorded: true,
+    processDataEthicsPrivacyConsentApproved: true,
+    attentionAnalysisPreregistrationRecorded: true,
     independentPrelaunchReviewCompleted: true
   },
   studies: [
@@ -122,6 +136,7 @@ test("activation SQL commits a complete release and rolls back a partial attempt
     database.prepare(`
       INSERT INTO runtime_releases (
         release_id, app_version, worker_version_id,
+        administration_policy_json, administration_policy_sha256,
         public_build_manifest_sha256, runtime_manifest_sha256,
         bank_sha256, routes_sha256,
         runtime_bank_projection_sha256, runtime_routes_projection_sha256,
@@ -133,9 +148,10 @@ test("activation SQL commits a complete release and rolls back a partial attempt
         stop_new_allocations_at_target, retain_server_committed_partial_responses,
         protocol_completion_definition, partial_response_retention_definition,
         created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       releaseId, completeRelease.appVersion, completeRelease.workerVersionId,
+      ADMINISTRATION_POLICY_JSON, ADMINISTRATION_POLICY_SHA256,
       nonzero, nonzero, nonzero, nonzero, nonzero, nonzero, nonzero,
       completeRelease.randomizationSeedFingerprint,
       completeRelease.randomizationAlgorithm,
@@ -261,7 +277,10 @@ test("activation SQL rejects incomplete or mismatched release authority", () => 
     release => { release.workerVersionId = null; },
     release => { release.frozenAt = null; },
     release => { release.approvals.ethicsApprovalRecorded = false; },
+    release => { release.approvals.processDataEthicsPrivacyConsentApproved = false; },
     release => { release.recruitmentPolicy.hardCapStartsPerL1 = 421; },
+    release => { release.administrationPolicy.breaks.standardMinimumSeconds = 46; },
+    release => { release.expectedHashes.administrationPolicySha256 = "0".repeat(64); },
     release => { release.expectedHashes.bankPayloadSha256 = "0".repeat(64); },
     release => { release.studies[0].active = false; },
     release => { release.studies[1].l1 = "vi"; }
@@ -335,7 +354,7 @@ test("activation workflow requires full inactive preflight and exact post-activa
     release_integrity_verified: true,
     activation_preflight_ready: true,
     release_binding_sha256: releaseBinding,
-    protocol_version: "uvlt-fixed-ab-worker-v1"
+    protocol_version: FIELD_WORKER_PROTOCOL_VERSION
   };
   assert.equal(validateInactiveReleasePreflight(inactive, completeRelease), inactive);
   for (const invalid of [

@@ -2,6 +2,8 @@
 
 This directory contains a collection-disabled Cloudflare Workers integration for the fixed UVLT Form A + Form B calibration study. It is designed for two independent Prolific studies—Japanese L1 and Vietnamese L1—using one private, frozen 300-item bank.
 
+The committed Worker, D1 baseline, browser application, and release tooling now target the schema-v7 administration contract summarized below and specified in [`../design/full-length-soft-launch-protocol.md`](../design/full-length-soft-launch-protocol.md). This source state must not be read as launch authorization: consent/withdrawal, ethics, bilingual review, timing pilot, private release, live rehearsal, and independent activation gates remain outstanding.
+
 ## Security and data boundary
 
 The deployed public asset directory is `dist/`, generated from an explicit five-file source allowlist plus its deterministic v2 build manifest. The manifest records the exact `package.json` app version and per-file hashes. The repository root is never a Cloudflare asset directory.
@@ -9,7 +11,7 @@ The deployed public asset directory is `dist/`, generated from an explicit five-
 | Location | Permitted content |
 |---|---|
 | Public `dist/` | Participant HTML, CSS, and browser JavaScript only |
-| Private D1 | Frozen keyless prompts/options, route order, allocation slots, HMAC linkage values, unscored selected-option strings/positions, timings, and server events |
+| Private D1 | Frozen keyless prompts/options, route order, allocation slots, HMAC linkage values, unscored selected-option strings/positions, minimal testlet-level timings, and server events |
 | Worker secrets | Prolific API token, participant-linkage HMAC key, and completion code |
 | Offline restricted environment only | Canonical answer keys, scoring, correctness, scores, IRT parameters, and source workbooks |
 
@@ -19,7 +21,7 @@ Prolific identifiers are pseudonymous personal data. The Worker receives the thr
 
 A first verified launch does not require a pre-existing cookie. Once that launch has allocated a session, however, the launch URL alone is not a recovery credential: `/join` rotates the token only when the browser presents the still-valid cookie for that exact D1 session. A missing, wrong, stale, or expired cookie fails closed with `SESSION_RECOVERY_REQUIRED` and never receives a replacement cookie. This prevents a copied Prolific launch URL from taking over an existing session, but it also means cookie loss currently requires an approved study-team support decision; there is no automated or investigator bypass endpoint.
 
-The v1 field API administers the 100 main testlets only. The two local technical practice testlets are not yet represented in the server state machine, and consent/withdrawal state is not yet captured. An approved practice/participant-information/consent flow, a response-bearing withdrawal-redaction procedure, and Japanese/Vietnamese instruction review therefore remain launch gates.
+The v2/schema-v7 field API requires one synthetic interface practice before the 100 main testlets, retains only its versioned completion event, and server-enforces the frozen 45/90-second break schedule. Consent/withdrawal state is not yet captured. Approved participant information and consent, a response-bearing withdrawal-redaction procedure, Japanese/Vietnamese instruction review, and the complete prelaunch evidence gate therefore remain launch blockers.
 
 ## Request flow
 
@@ -34,8 +36,9 @@ Prolific launch URL
      or sends an unallocated participant to a generic closed-recruitment page
   -> frozen schedule supplies route + option layout
   -> HttpOnly cookie + 303 redirect to /
+  -> schema-v7 synthetic practice completion; no practice answers retained
   -> one authenticated testlet at a time
-  -> 100 atomic testlet saves + 9 required breaks
+  -> 100 atomic testlet saves + 8 x 45-second breaks + 1 x 90-second midpoint break
   -> server coverage verification
   -> Prolific completion redirect
 ```
@@ -44,9 +47,41 @@ The schedule is generated before release freeze from a secret seed. Japanese- an
 
 Within each L1, the recruitment target is 300 protocol completers and the immutable allocation hard cap is 420 unique starts. A protocol completer is entered in the append-only completion ledger only after D1 has verified 100 testlets, 300 item responses, and nine required breaks. The allocation statement atomically refuses a new session when that L1 has reached 300 ledgered completers or has consumed all 420 slots. Already allocated sessions remain resumable and may finish, so the final completer count can exceed 300. A second append-only ledger containing only release, L1, and allocation index prevents index reuse even if participant-linked session data are later removed under an approved withdrawal/redaction procedure. Exclusions and quality flags do not replenish starts, and 420 is not extended if the completer target is missed.
 
-The frozen policy defines retained partial data as successfully server-committed responses from consented, nonwithdrawn incomplete sessions. The atomic storage unit is one complete three-response testlet; selections made in a testlet but never submitted to the server are not retained. The current engineering preview enforces committed-record immutability but does not yet implement or persist consent/withdrawal state. The Worker exposes no delete endpoint, and D1 guards reject updates and deletes of committed submissions, responses, events, and sessions. A withdrawal that requires erasure therefore needs a separately reviewed redaction migration that removes participant-linked rows while leaving the minimal start/completion ledgers intact. Retention does not itself determine analytic inclusion, and collection remains blocked until the approved consent gate and redaction path are implemented and tested with response-bearing sessions.
+The frozen policy defines retained partial data as successfully server-committed responses from consented, nonwithdrawn incomplete sessions. The atomic storage unit is one complete three-response testlet; selections made in a testlet but never submitted to the server are not retained. The current engineering preview enforces committed-record immutability but does not yet implement or persist consent/withdrawal state. The Worker exposes no delete endpoint. D1 makes committed submissions, responses, and events append-only; it prohibits normal session deletion and changes to immutable session identity fields while permitting only trigger-constrained token rotation, progress, practice, and completion updates. A withdrawal that requires erasure therefore needs a separately reviewed redaction migration that removes participant-linked rows while leaving the minimal start/completion ledgers intact. Retention does not itself determine analytic inclusion, and collection remains blocked until the approved consent gate and redaction path are implemented and tested with response-bearing sessions.
 
 The six layouts are an even-order Williams square relabelled so layout 0 reproduces canonical option order. Across them, each canonical option appears once in every displayed position and every directed adjacent pair appears once. Prompt-row order is intentionally kept canonical to preserve the original testlet definition and Form A/B comparison. Accordingly, this design controls option-column position and first-order adjacency but does not identify prompt-row-order effects.
+
+## Schema-v7 administration policy (implemented, collection-disabled)
+
+Schema v7 is an administration-policy change, not merely a display revision. It receives a new app version and must receive a new release ID, Worker version, public manifest, fresh D1 schema-v7 database, release-binding digest, and independent review. The committed code remains a collection-disabled engineering baseline until every launch gate passes.
+
+### Synthetic practice and neutral progress
+
+One synthetic three-row/six-option practice set precedes the protected main bank. It does not reproduce UVLT prompts or options and has no canonical key, correctness feedback, or score. The browser requires structurally complete selections so that participants learn the interaction, but D1 retains only a versioned practice-completion marker. Practice option selections, displayed positions, answer status, and practice response times are not retained.
+
+Main-study progress must be procedural and neutral: module number, set number, and the number of server-confirmed sets saved. The interface must not display accuracy, score, ability, speed comparisons, item difficulty, evaluative praise, or messages that could differentially change effort across routes or L1 strata.
+
+### Server-observed breaks and safe pause
+
+Nine breaks occur after Modules 1–9. Breaks after Modules 1–4 and 6–9 require at least 45,000 ms; the midpoint break after Module 5 requires at least 90,000 ms. The authoritative start is the immutable server timestamp for the tenth submitted testlet in that module, and the authoritative end is the immutable server timestamp for accepted break completion. The browser countdown is advisory; the Worker and D1 boundary must reject an early completion and continue to block the next testlet.
+
+The resulting quantity is named `server_observed_break_interval_ms`. It can be reproduced from the two retained server timestamps and a pinned derivation, but it is not a measure of gaze, attention, actual rest, or continuous page visibility. It may include request latency and time during which the tab was backgrounded or closed. No focus/blur events, visibility events, countdown ticks, mouse movement, keystrokes, or device fingerprint are collected to reinterpret it.
+
+The only affirmative safe-pause control appears at the module-break boundary, after the preceding ten testlets have been confirmed. It writes no pause event or reason, does not change session status, route, option layout, allocation index, or next-testlet ordinal, and does not create a replacement start. Resume uses the same authenticated session and the original break clock; reload must never restart the required interval. Closing during an unsubmitted three-item testlet remains unsafe for those selections, so the interface must distinguish confirmed from unconfirmed data and warn before leaving without copying answers into browser storage.
+
+### Minimal process data and private handling
+
+The restricted record is limited to the linkage and allocation fields required to run the study, committed main-task response strings and displayed positions, testlet-level client/server timing that the approved protocol and consent permit, the minimum session/testlet/break/completion events needed to verify state, and the two server timestamps needed to derive each break interval. Practice answers, item-level clickstreams, pause reasons, page-visibility telemetry, and unsent selections are outside the schema-v7 dataset. `localStorage`, `sessionStorage`, URLs, logs, and public APIs must not contain answers or raw Prolific identifiers.
+
+Raw responses, HMAC linkage values, row-level timings, break events, private stimuli, and participant-level allocation rows stay in approved restricted storage. Public or OSF materials may include schemas, code, synthetic fixtures, aggregate attrition/timing summaries, and provenance only. This data-minimization policy does not override the participant's approved withdrawal rights or the required response-bearing redaction procedure.
+
+### Full-length soft launch and analysis freeze
+
+Before confirmatory recruitment, run a separately identified full-length schema-v7 soft launch using the complete synthetic-practice, 300-item, nine-break, resume, and Prolific-completion path. Its exact maximum starts, L1 composition, compensation, deadline, and whether it is categorically excluded from confirmatory calibration must be fixed before the first start. Prefer complete ten-start route blocks within each L1; do not repair route/layout balance adaptively after observing completion or response outcomes.
+
+The soft-launch dashboard is operational only: verified joins, unique starts, saved-testlet coverage, break-transition and completion-link success, server errors, total-duration and break-interval aggregates, support contacts, and checks for identifier leakage. Do not inspect answer keys, correctness, item difficulty, or participant ability to decide whether to continue. Freeze go/no-go thresholds in advance. Any substantive change to stimuli, instructions, practice, timing, break enforcement, storage, or allocation requires a new version/release and an explicit decision about the status of earlier data.
+
+The preregistration must distinguish the primary analysis from sensitivity analyses for all committed versus protocol-complete records, inclusion versus exclusion of any eligible soft-launch cohort, long interruption intervals, prespecified testlet-time flags, operational-error sessions, and differential attrition across L1, route, layout, and module position. No participant or response is excluded post hoc because of a score, an unexpectedly long break, or knowledge of model results. See the full protocol for the estimands, monitoring boundary, and release decision rules.
 
 ## Local fail-closed checks
 
@@ -61,7 +96,7 @@ npm run check:worker
 
 `build:randomization-schedule` requires `UVLT_RANDOMIZATION_SEED` from the process environment and writes the participant-level schedule plus a stimulus-free aggregate balance audit only to ignored `cloudflare/private/`. Supply the seed through an approved secret manager; never paste it into a command, shell history, file, issue, or log. The tool validates the Williams balance of the frozen routes before producing any schedule. Record the reported `allocationScheduleSha256` payload hash (not `allocationScheduleFileSha256`) and `seedFingerprint`, but keep the raw seed and participant-level schedule restricted throughout recruitment.
 
-`build:private-seed` is an optional preview command that may be run only in an approved private workspace. Its default input and output paths are `cloudflare/release-config.example.json` and ignored `cloudflare/private/runtime-seed.preview.sql`, physically distinct from the frozen production path; it writes only when the matching private artifacts and non-placeholder hash pins are present. The code-only public copy intentionally lacks those artifacts and therefore fails closed. The example release is inactive, has `workerVersionId: null`, contains no Study IDs, and has every approval gate set to `false`. For a real release, always pass the reviewed private config and the explicit `cloudflare/private/runtime-seed.sql` output shown below. The builder requires the release app version to equal `package.json`, verifies the raw SHA-256 and app version of `dist/build-manifest.json`, validates the schema-v6 recruitment policy, and validates the frozen schedule and its hash/fingerprint. It also derives and pins canonical hashes of the exact testlet and route projections inserted into D1. Even when `--require-active` validates a finalized schema-v6 config, the generated SQL always inserts the release and studies inactive. Activation is deliberately separate and may occur only after exact-version, route, and live-domain verification.
+`build:private-seed` is an optional preview command that may be run only in an approved private workspace. Its default input and output paths are `cloudflare/release-config.example.json` and ignored `cloudflare/private/runtime-seed.preview.sql`, physically distinct from the frozen production path; it writes only when the matching private artifacts and non-placeholder hash pins are present. The code-only public copy intentionally lacks those artifacts and therefore fails closed. The example release is inactive, has `workerVersionId: null`, contains no Study IDs, and has every approval gate set to `false`. For a real release, always pass the reviewed private config and the explicit `cloudflare/private/runtime-seed.sql` output shown below. The builder requires the release app version to equal `package.json`, verifies the raw SHA-256 and app version of `dist/build-manifest.json`, validates the exact schema-v7 recruitment and administration policies plus their hash, and validates the frozen schedule and its hash/fingerprint. It also derives and pins canonical hashes of the exact testlet and route projections inserted into D1. Even when `--require-active` validates a finalized schema-v7 config, the generated SQL always inserts the release and studies inactive. Activation remains separate and may occur only after exact-version, route, administration-policy, and live-domain verification.
 
 The committed `wrangler.jsonc` and its named staging/production environments are intentionally unusable for collection:
 
@@ -77,7 +112,7 @@ The default and production targets disable `workers.dev`; staging is the only ta
 ## Private release preparation
 
 1. Copy `cloudflare/release-config.example.json` to ignored `cloudflare/private/release-config.json`.
-2. Keep `appVersion` equal to the exact `package.json` version. Initially keep schema-v6 `workerVersionId` null and `active` false. Preserve the exact recruitment-policy object from the example config; it binds target 300, hard cap 420, target stopping, committed-partial retention, and their operational definitions into the release identity. Record the reviewed release ID, public build-manifest hash, exact runtime-manifest/bank/route hashes, canonical D1 bank/route projection hashes, SHA-256 fingerprints of the exact UTF-8 HMAC key and completion code, the expected `MANUALLY_REVIEW` or `AUTOMATICALLY_APPROVE` action, approval gates, and the two 24-character Study IDs. Because the canonical projections bind the release ID, derive their two hashes for the intended inactive private release before freezing it:
+2. Keep `appVersion` equal to the exact `package.json` version. The present example is schema v7 and may be used only for disabled engineering checks. For the next participant release, copy it to the private workspace with `workerVersionId` null and `active` false until all gates pass. Preserve its exact recruitment and administration policy objects; they bind target 300, hard cap 420, target stopping, committed-partial retention, synthetic-practice completion without answers, timed-break rules, and their operational definitions into the release identity. Record the reviewed release ID, public build-manifest hash, exact runtime-manifest/bank/route hashes, canonical D1 bank/route projection hashes, administration-policy hash, SHA-256 fingerprints of the exact UTF-8 HMAC key and completion code, the expected `MANUALLY_REVIEW` or `AUTOMATICALLY_APPROVE` action, approval gates, and the two 24-character Study IDs. Because the canonical projections bind the release ID, derive their two hashes for the intended inactive private release before freezing it:
 
    ```bash
    npm run derive:runtime-projections -- --config cloudflare/private/release-config.json
@@ -127,7 +162,7 @@ cp cloudflare/wrangler.production.example.json \
 
 The committed template deliberately uses the reserved placeholder domain `uvlt-study.example.edu` and a zero D1 UUID. The production verifier rejects that domain; `example.edu`, `example.com`, `example.net`, `example.org`, and their subdomains; the reserved `.example`/`.invalid`/`.test`/`.localhost` suffixes; `workers.dev`; `pages.dev`; and any database name other than `uvlt-fixed-ab-calibration-production`. Replace the template route with exactly one institutionally controlled custom domain before attempting the field gate.
 
-Schema v6 was finalized before any authorized collection and therefore remains the baseline `0001_initial.sql`. It adds the immutable recruitment policy, 840 allocation slots, and minimal append-only start/completion ledgers (release, L1, allocation index only) alongside the Cloudflare Worker version UUID and canonical D1 bank/route projection hashes. If an earlier engineering-preview copy of `0001_initial.sql` was already recorded in a local, staging, or remote D1 migration table, Wrangler will not reapply the changed filename. Do not reuse that database for this release. Provision a fresh empty staging/production database (or write and independently validate an explicit upgrade migration) and verify its migration history before loading the seed. Never infer schema v6 readiness from the filename alone.
+The current `0001_initial.sql` is the fresh-database schema-v7 baseline. It includes the immutable recruitment and administration policies, practice-completion state, server-enforced break events, 840 allocation slots, minimal append-only start/completion ledgers, Worker version UUID, and canonical D1 bank/route projection hashes. If an earlier schema-v6 engineering database already recorded a different file under the same migration name, Wrangler will not reapply the edited filename. Do not reuse that database for this release: provision a fresh empty schema-v7 staging/production database, or write and independently validate an explicit upgrade migration. Never infer readiness from the filename alone.
 
 Apply the tracked migration first. Apply the private seed only after completing the immutable Worker upload/ID-capture step below and rebuilding the finalized seed with `--require-active`; the document presents the D1 commands here for reference, not as permission to skip that dependency:
 
@@ -163,7 +198,7 @@ The predeploy gate runs the locally installed, exactly pinned Wrangler 4 executa
 
 The Worker version ID cannot be placed in a Worker environment variable: changing that variable would itself create another version and therefore a circular identity. Use the D1 release row as the external immutable pin.
 
-1. With the schema-v6 release config still inactive and `workerVersionId: null`, finish the private Wrangler config and all local gates. Then intentionally upload, but do not deploy, one version:
+1. With the schema-v7 release config still inactive and `workerVersionId: null`, finish the private Wrangler config and all local gates. Then intentionally upload, but do not deploy, one version:
 
 ```bash
 npm run upload:worker-version:dry-run
@@ -267,9 +302,12 @@ All items must be evidenced, not merely asserted:
 - content-owner permission for protected UVLT stimuli;
 - authoritative answer-key approval for the separate offline scorer;
 - ethics approval and approved participant information/consent/withdrawal flow;
-- Japanese and Vietnamese instruction review;
-- timing and fatigue pilot for 100 testlets and nine breaks;
+- Japanese and Vietnamese review of participant information, synthetic practice, neutral progress, break, safe-pause, resume, and completion language;
+- implemented and independently tested schema-v7 administration: practice completion without retained practice answers, 100 main testlets, eight server-observed 45-second breaks, the 90-second break after Module 5, and break-boundary safe pause without rerandomization;
+- timing and fatigue pilot for the complete synthetic-practice, 300-item, nine-break administration;
 - Prolific compensation and maximum-time settings based on the pilot;
+- a separately identified full-length soft launch with a frozen maximum, L1 composition, operational-only dashboard, go/no-go thresholds, and an explicit rule for excluding or preregisteredly retaining its data;
+- preregistered primary and sensitivity analyses covering all committed versus protocol-complete records, soft-launch inclusion, long interruptions, testlet-time flags, operational errors, and differential attrition across L1, route, layout, and module position;
 - an approved return/contact/compensation procedure for verified Prolific participants whom the Worker blocks at the target or hard cap, tested against the generic closed-recruitment page;
 - a single frozen 840-slot allocation schedule whose hash, seed fingerprint, algorithm identifiers, Williams checks, within-block route counts, and L1 × route × option-layout cell counts have been independently reviewed;
 - a preregistered operational stopping plan implementing target 300/hard cap 420 per L1, including authoritative D1 count queries, Prolific pause ownership and latency, in-flight grace period, recruitment deadline/pool-exhaustion rule, overshoot inclusion, duplicate/exclusion handling, and Prolific-versus-D1 reconciliation;
@@ -280,12 +318,12 @@ All items must be evidenced, not merely asserted:
 - a production custom domain and separate staging/production D1 bindings;
 - rate-limit/WAF rules for `/join` and write endpoints, tested without blocking legitimate shared-network participants;
 - private export and offline HMAC-linkage rehearsal;
-- local Worker/D1 tests, concurrency stress test, and duplicate/reload test;
+- local Worker/D1 tests, concurrency stress test, duplicate/reload test, exact 44,999/45,000 ms and 89,999/90,000 ms break-boundary tests, and proof that reload does not restart the break clock;
 - staging preview using Prolific test participants;
 - an approved lost/blocked/expired-cookie support and restart policy, tested against `SESSION_RECOVERY_REQUIRED`;
 - an explicit decision on Prolific Secure external URL availability; JWT verification remains unimplemented and must be added before treating that feature as a launch gate;
 - an independently reviewed execution of the two-phase Cloudflare version workflow, including the private no-clobber upload attestation, inactive D1 load, exact-ID 100% deployment readback, custom-domain trigger verification, inactive live rehearsal, and separate one-time activation;
-- 299-response and missing-break completion rejection checks;
+- 299-response, missing-break, early-break, and missing-practice-completion rejection checks;
 - confirmation that no raw identifier appears in the browser, localStorage, sessionStorage, participant API, application logs, or default analysis export;
 - confirmation that zone HTTP logs, Logpush/Log Explorer, WAF/security events, and their retention settings do not store the study host's full launch URI or query; use path-only fields and exclude or redact `ClientRequestURI`-style query-bearing fields;
 - independent review of the final release hashes and live configuration.
@@ -302,6 +340,6 @@ npx wrangler d1 export uvlt-fixed-ab-calibration-production --remote \
   --output=cloudflare/exports/uvlt-fixed-ab-restricted.sql
 ```
 
-Cloudflare notes that a D1 export blocks other database requests, so schedule it outside active collection. Preserve the migration files, release configuration without secrets, package lock, randomization algorithm identifiers, seed fingerprint, allocation-schedule hash, stimulus-free balance audit, Worker version ID and one-time release tag, public/private artifact SHA-256 values, export SHA-256, and export timestamp. Apply the same domain-separated HMAC procedure to the restricted Prolific CSV to join records offline; do not export or publish the HMAC key. The analysis extract should retain route, option-layout ID, displayed option position, start/completion status, and L1 so that balance and position effects can be reported explicitly.
+Cloudflare notes that a D1 export blocks other database requests, so schedule it outside active collection. Preserve the migration files, release configuration without secrets, package lock, randomization and administration-policy identifiers, seed fingerprint, allocation-schedule hash, stimulus-free balance audit, Worker version ID and one-time release tag, public/private artifact SHA-256 values, export SHA-256, and export timestamp. Apply the same domain-separated HMAC procedure to the restricted Prolific CSV to join records offline; do not export or publish the HMAC key. The restricted analysis extract should retain route, option-layout ID, displayed option position, start/completion status, L1, and the raw server start/end timestamps for each break. Derive `server_observed_break_interval_ms` with the pinned analysis code; do not relabel it as gaze, attention, or actual rest.
 
-The public/OSF package may contain code, schemas, synthetic tests, aggregate outputs, and software provenance. It must exclude the private D1 seed, raw D1 export, row-level response data, HMAC linkage values, Prolific identifiers, secrets, stimuli without permission, and canonical keys. The raw randomization seed and participant-level allocation schedule are included only if the preregistered postcollection disclosure policy and ethics/test-security review explicitly authorize them; otherwise publish only their fingerprints/hashes and the stimulus-free balance audit.
+The public/OSF package may contain code, schemas, synthetic tests, aggregate outputs, and software provenance. It must exclude the private D1 seed, raw D1 export, row-level response and process data, row-level break timestamps or intervals, HMAC linkage values, Prolific identifiers, secrets, stimuli without permission, and canonical keys. The raw randomization seed and participant-level allocation schedule are included only if the preregistered postcollection disclosure policy and ethics/test-security review explicitly authorize them; otherwise publish only their fingerprints/hashes and the stimulus-free balance audit.

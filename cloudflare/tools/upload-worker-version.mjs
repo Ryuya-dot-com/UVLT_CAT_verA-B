@@ -13,6 +13,11 @@ import {
   releaseHandoffIdentitySha256
 } from "./worker-upload-inputs.mjs";
 import { validateRecruitmentPolicy } from "./randomization-design.mjs";
+import {
+  ADMINISTRATION_POLICY_APPROVAL_GATES,
+  validateAdministrationPolicy,
+  validateAdministrationPolicySha256
+} from "./administration-policy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -225,8 +230,9 @@ try {
     throw new Error("Release, Wrangler, package, and local Wrangler metadata must be valid strict JSON");
   }
 
-  assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Private release config schema is unsupported");
+  assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-7", "Private release config schema is unsupported");
   validateRecruitmentPolicy(release.recruitmentPolicy);
+  validateAdministrationPolicy(release.administrationPolicy);
   assert(release.active === false, "Version upload requires an inactive release; activation occurs only after ID capture and D1 preparation");
   assert(release.workerVersionId === null, "Version upload requires workerVersionId to be null before Cloudflare assigns it");
   assert(release.frozenAt === null, "Version upload requires frozenAt to remain null until Cloudflare assigns the immutable version ID");
@@ -236,6 +242,7 @@ try {
   assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
   assert(release.appVersion === packageMetadata?.version, "Private release appVersion must exactly match package.json version");
   for (const field of [
+    "administrationPolicySha256",
     "runtimeManifestPayloadSha256",
     "bankPayloadSha256",
     "routesPayloadSha256",
@@ -247,12 +254,20 @@ try {
     const value = release.expectedHashes?.[field];
     assert(/^[0-9a-f]{64}$/.test(value || "") && value !== zeroSha256, `Private release expectedHashes.${field} is invalid`);
   }
+  validateAdministrationPolicySha256(
+    release.expectedHashes.administrationPolicySha256
+  );
+  for (const approval of ADMINISTRATION_POLICY_APPROVAL_GATES) {
+    assert(release.approvals?.[approval] === true,
+      `Private release approval ${approval} must be recorded before Worker version upload`);
+  }
   assert(wrangler?.name === "uvlt-fixed-ab-calibration", "Production Worker name is invalid");
   assert(wrangler.main === "../worker/index.ts", "Production Wrangler entry point is invalid");
   assert(wrangler.vars?.COLLECTION_MODE === "field", "Production Wrangler COLLECTION_MODE must be field");
   assert(wrangler.vars?.EXPECTED_RELEASE_ID === release.releaseId, "Production Wrangler release ID does not match the upload release");
   assert(wrangler.vars?.EXPECTED_APP_VERSION === release.appVersion, "Production Wrangler appVersion does not match the upload release");
   for (const [variable, value] of [
+    ["EXPECTED_ADMINISTRATION_POLICY_SHA256", release.expectedHashes.administrationPolicySha256],
     ["EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256", release.expectedHashes.publicBuildManifestSha256],
     ["EXPECTED_RUNTIME_MANIFEST_SHA256", release.expectedHashes.runtimeManifestPayloadSha256],
     ["EXPECTED_BANK_SHA256", release.expectedHashes.bankPayloadSha256],
@@ -402,7 +417,7 @@ try {
       workerVersionTag: release.releaseId,
       uploadInputsSha256: sourceInputs.sha256,
       attestation: path.relative(project, outputPath),
-      nextStep: "Copy workerVersionId into the schema-v6 release config, freeze it, then build and review the inactive D1 seed."
+      nextStep: "Copy workerVersionId into the schema-v7 release config, freeze it, then build and review the inactive D1 seed."
     }, null, 2));
   }
 } finally {

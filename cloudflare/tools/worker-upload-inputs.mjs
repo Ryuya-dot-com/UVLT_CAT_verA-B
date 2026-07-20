@@ -71,6 +71,8 @@ export async function collectWorkerUploadInputs({ project, wranglerConfigPath })
     regularFileEntry("package-lock.json", path.join(project, "package-lock.json")),
     regularFileEntry("cloudflare/private/wrangler.production.json", wranglerConfigPath),
     regularFileEntry("cloudflare/tsconfig.json", path.join(project, "cloudflare", "tsconfig.json")),
+    regularFileEntry("cloudflare/tools/administration-policy.mjs",
+      path.join(project, "cloudflare", "tools", "administration-policy.mjs")),
     regularFileEntry("cloudflare/worker/index.ts", workerPath),
     ...migrationNames
       .map(entry => entry.name)

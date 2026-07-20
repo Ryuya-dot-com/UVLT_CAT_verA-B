@@ -8,6 +8,8 @@ const WORKER_VERSION_ID_PATTERN =
 const ACTIVATION_IMPORT_QUERY_COUNT = 9;
 const ACTIVATION_DIRECT_CHANGE_COUNT = 3;
 
+export const FIELD_WORKER_PROTOCOL_VERSION = "uvlt-fixed-ab-worker-v2";
+
 function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
@@ -43,7 +45,7 @@ export function validateInactiveReleasePreflight(payload, releaseIdentity) {
     "Inactive release failed full Worker/version/secret/asset/D1 integrity verification");
   assert(payload.activation_preflight_ready === true,
     "Release and both Study rows are not in the exact inactive pre-activation state");
-  assert(payload.protocol_version === "uvlt-fixed-ab-worker-v1",
+  assert(payload.protocol_version === FIELD_WORKER_PROTOCOL_VERSION,
     "Inactive release preflight returned an unexpected protocol version");
   validateReleaseBinding(payload, releaseIdentity, "Inactive release preflight");
   return payload;
@@ -88,7 +90,7 @@ export function validateActiveReleaseReadiness(payload, releaseIdentity) {
   "Controlled domain did not become ready after the reviewed D1 activation");
   assert(payload.activation_preflight_ready === false,
     "Controlled domain still reports an inactive pre-activation state after activation");
-  assert(payload.protocol_version === "uvlt-fixed-ab-worker-v1",
+  assert(payload.protocol_version === FIELD_WORKER_PROTOCOL_VERSION,
     "Active release check returned an unexpected protocol version");
   validateReleaseBinding(payload, releaseIdentity, "Active release check");
   return payload;

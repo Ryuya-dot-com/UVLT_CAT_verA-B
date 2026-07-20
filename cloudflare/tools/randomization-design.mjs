@@ -14,7 +14,7 @@ const AUDIT_SCHEMA_VERSION = "uvlt-fixed-ab-randomization-balance-audit-2";
 export const TARGET_PROTOCOL_COMPLETERS_PER_L1 = 300;
 export const HARD_CAP_STARTS_PER_L1 = 420;
 export const PROTOCOL_COMPLETION_DEFINITION =
-  "d1-completed-after-100-testlets-300-responses-9-breaks-v1";
+  "d1-completed-after-practice-100-testlets-300-responses-8x45s-plus-midpoint90s-breaks-v2";
 export const PARTIAL_RESPONSE_RETENTION_DEFINITION =
   "consented-nonwithdrawn-server-committed-complete-testlets-v1";
 const BLOCK_SIZE = 10;

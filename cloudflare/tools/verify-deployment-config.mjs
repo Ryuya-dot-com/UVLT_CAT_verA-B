@@ -6,6 +6,11 @@ import {
   OPTION_LAYOUT_ALGORITHM,
   validateRecruitmentPolicy
 } from "./randomization-design.mjs";
+import {
+  ADMINISTRATION_POLICY_APPROVAL_GATES,
+  validateAdministrationPolicy,
+  validateAdministrationPolicySha256
+} from "./administration-policy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -72,8 +77,9 @@ const [release, wrangler, packageMetadata] = await Promise.all([
   readJson(path.join(project, "package.json"), "package.json")
 ]);
 
-assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-6", "Private release config schema is unsupported");
+assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-7", "Private release config schema is unsupported");
 validateRecruitmentPolicy(release.recruitmentPolicy);
+validateAdministrationPolicy(release.administrationPolicy);
 assert(release.active === true, "Private release config must be active before field deployment");
 assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
 assert(typeof release.appVersion === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(release.appVersion), "Private release appVersion is invalid");
@@ -81,6 +87,7 @@ assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
 assert(release.appVersion === packageMetadata?.version, "Private release appVersion must exactly match package.json version");
 assert(release.expectedHashes && typeof release.expectedHashes === "object" && !Array.isArray(release.expectedHashes), "Private release expectedHashes must be an object");
 for (const field of [
+  "administrationPolicySha256",
   "runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256",
   "runtimeBankProjectionSha256", "runtimeRoutesProjectionSha256",
   "allocationScheduleSha256", "publicBuildManifestSha256"
@@ -88,6 +95,9 @@ for (const field of [
   assert(/^[0-9a-f]{64}$/.test(release.expectedHashes[field] || ""), `Private release expectedHashes.${field} is invalid`);
   assert(release.expectedHashes[field] !== "0".repeat(64), `Private active release expectedHashes.${field} is still the zero placeholder`);
 }
+validateAdministrationPolicySha256(
+  release.expectedHashes.administrationPolicySha256
+);
 assert(/^sha256:[0-9a-f]{64}$/.test(release.randomizationSeedFingerprint || ""), "Private release randomizationSeedFingerprint is invalid");
 assert(release.randomizationSeedFingerprint !== `sha256:${"0".repeat(64)}`, "Private active release randomizationSeedFingerprint is still the zero placeholder");
 assert(release.randomizationAlgorithm === RANDOMIZATION_ALGORITHM, "Private release randomizationAlgorithm is unsupported");
@@ -104,6 +114,7 @@ for (const approval of [
   "privateWorkspaceApprovalRecorded",
   "randomizationScheduleReviewRecorded",
   "attritionReplacementPolicyRecorded",
+  ...ADMINISTRATION_POLICY_APPROVAL_GATES,
   "independentPrelaunchReviewCompleted"
 ]) {
   assert(release.approvals?.[approval] === true, `Private active release approval ${approval} is not recorded`);
@@ -144,6 +155,7 @@ const expectedVariableNames = [
   "COLLECTION_MODE",
   "EXPECTED_RELEASE_ID",
   "EXPECTED_APP_VERSION",
+  "EXPECTED_ADMINISTRATION_POLICY_SHA256",
   "EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256",
   "EXPECTED_RUNTIME_MANIFEST_SHA256",
   "EXPECTED_BANK_SHA256",
@@ -156,10 +168,11 @@ const expectedVariableNames = [
   "EXPECTED_PROLIFIC_COMPLETION_ACTION",
   "PROLIFIC_API_BASE_URL"
 ];
-assert(JSON.stringify(Object.keys(wrangler.vars).sort()) === JSON.stringify(expectedVariableNames.sort()), "Production vars must contain exactly the fourteen non-secret runtime variables");
+assert(JSON.stringify(Object.keys(wrangler.vars).sort()) === JSON.stringify(expectedVariableNames.sort()), "Production vars must contain exactly the fifteen non-secret runtime variables");
 assert(wrangler.vars.COLLECTION_MODE === "field", "Production COLLECTION_MODE must be field");
 assert(wrangler.vars?.EXPECTED_RELEASE_ID === release.releaseId, "Production EXPECTED_RELEASE_ID must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_APP_VERSION === release.appVersion, "Production EXPECTED_APP_VERSION must exactly match package.json and the active private release");
+assert(wrangler.vars?.EXPECTED_ADMINISTRATION_POLICY_SHA256 === release.expectedHashes.administrationPolicySha256, "Production EXPECTED_ADMINISTRATION_POLICY_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256 === release.expectedHashes.publicBuildManifestSha256, "Production EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_RUNTIME_MANIFEST_SHA256 === release.expectedHashes.runtimeManifestPayloadSha256, "Production EXPECTED_RUNTIME_MANIFEST_SHA256 must exactly match the active private release");
 assert(wrangler.vars?.EXPECTED_BANK_SHA256 === release.expectedHashes.bankPayloadSha256, "Production EXPECTED_BANK_SHA256 must exactly match the active private release");

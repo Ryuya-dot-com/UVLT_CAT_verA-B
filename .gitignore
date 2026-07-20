@@ -21,7 +21,9 @@ dist/
 /test/*
 !/test/randomization-design.test.mjs
 !/test/activation-sql.test.mjs
+!/test/administration-policy.test.mjs
 !/test/attrition-reserve-simulation.test.mjs
+!/test/field-ux.test.mjs
 !/test/version-workflow-validation.test.mjs
 /index.html
 cloudflare/private/
