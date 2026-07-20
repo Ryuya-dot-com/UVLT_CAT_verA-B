@@ -2,7 +2,7 @@ import { env as runtimeEnv } from "cloudflare:workers";
 import { applyD1Migrations, type D1Migration } from "cloudflare:test";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import worker, { sha256Hex } from "../worker/index";
+import worker, { optionPermutationForLayout, sha256Hex } from "../worker/index";
 
 const ORIGIN = "https://uvlt.example";
 const RELEASE_ID = "release-test-v1";
@@ -24,10 +24,15 @@ const PUBLIC_BUILD_MANIFEST_SHA256 = "96a3bc87f488edb7bb822ab0ce235bf1eea61f8cac
 const RUNTIME_MANIFEST_SHA256 = "1".repeat(64);
 const BANK_SHA256 = "2".repeat(64);
 const ROUTES_SHA256 = "3".repeat(64);
+const ALLOCATION_SCHEDULE_SHA256 = "de02d7a732893d96108579fb8b80569b4b22bfc932c0a910512fd549de964063";
+const RANDOMIZATION_SEED_FINGERPRINT = `sha256:${"4".repeat(64)}`;
+const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
+const OPTION_LAYOUT_ALGORITHM = "even-order-williams-square-6-canonical-first-v1";
 const PARTICIPANT_HMAC_KEY_FINGERPRINT = "sha256:9df491e6b93f01674bba2b1840d9dbb6c14d847921709325d8405982ef5d42dc";
 const COMPLETION_CODE_FINGERPRINT = "sha256:e02731629394086455f97e58d6c865f78f10dea4436f6ca51950ec7911519ef9";
 const HEX_64 = /^[0-9a-f]{64}$/;
 const ISO_UTC_PATTERN_FOR_TEST = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+let schemaGeneration = 0;
 
 type TestBindings = Env & { TEST_MIGRATIONS: D1Migration[] };
 
@@ -72,6 +77,7 @@ const fieldEnvironment = (overrides: Record<string, unknown> = {}) => environmen
   EXPECTED_RUNTIME_MANIFEST_SHA256: RUNTIME_MANIFEST_SHA256,
   EXPECTED_BANK_SHA256: BANK_SHA256,
   EXPECTED_ROUTES_SHA256: ROUTES_SHA256,
+  EXPECTED_ALLOCATION_SCHEDULE_SHA256: ALLOCATION_SCHEDULE_SHA256,
   EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT: PARTICIPANT_HMAC_KEY_FINGERPRINT,
   EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT: COMPLETION_CODE_FINGERPRINT,
   EXPECTED_PROLIFIC_COMPLETION_ACTION: COMPLETION_ACTION,
@@ -80,7 +86,7 @@ const fieldEnvironment = (overrides: Record<string, unknown> = {}) => environmen
   PROLIFIC_API_TOKEN: "test-only-prolific-token",
   PROLIFIC_COMPLETION_CODE: COMPLETION_CODE,
   CF_VERSION_METADATA: {
-    id: "11111111-1111-4111-8111-111111111111",
+    id: `11111111-1111-4111-8111-${String(schemaGeneration).padStart(12, "0")}`,
     tag: RELEASE_ID,
     timestamp: "2026-07-20T00:00:00.000Z"
   },
@@ -136,12 +142,45 @@ function stableJsonForTest(value: unknown): string {
   return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJsonForTest(record[key])}`).join(",")}}`;
 }
 
+function syntheticAllocationSlot(l1: "ja" | "vi", allocationIndex: number): {
+  randomizationBlock: number;
+  blockPosition: number;
+  routeId: string;
+  optionLayoutId: number;
+} {
+  const randomizationBlock = Math.floor(allocationIndex / 10);
+  const positionWithinBlock = allocationIndex % 10;
+  const l1RouteOffset = l1 === "ja" ? 0 : 4;
+  const l1LayoutOffset = l1 === "ja" ? 2 : 5;
+  const routeIndex = (positionWithinBlock * 3 + randomizationBlock * 7 + l1RouteOffset + 6) % 10;
+  return {
+    randomizationBlock,
+    blockPosition: positionWithinBlock + 1,
+    routeId: `R${String(routeIndex + 1).padStart(2, "0")}`,
+    optionLayoutId: (routeIndex + randomizationBlock + l1LayoutOffset) % 6
+  };
+}
+
+function evenOrderWilliamsSquareForTest(order: number): number[][] {
+  const first = [0];
+  for (let offset = 1; first.length < order; offset += 1) {
+    first.push(offset);
+    if (first.length < order) first.push(order - offset);
+  }
+  const canonicalLabelByRawTreatment = new Map(
+    first.map((rawTreatment, canonicalPosition) => [rawTreatment, canonicalPosition])
+  );
+  return Array.from({ length: order }, (_value, row) =>
+    first.map((condition) => canonicalLabelByRawTreatment.get((condition + row) % order)!));
+}
+
 async function applySchema(): Promise<void> {
   await bindings.DB.batch([
     bindings.DB.prepare("DROP TABLE IF EXISTS responses"),
     bindings.DB.prepare("DROP TABLE IF EXISTS testlet_submissions"),
     bindings.DB.prepare("DROP TABLE IF EXISTS session_events"),
     bindings.DB.prepare("DROP TABLE IF EXISTS sessions"),
+    bindings.DB.prepare("DROP TABLE IF EXISTS runtime_allocation_slots"),
     bindings.DB.prepare("DROP TABLE IF EXISTS runtime_route_testlets"),
     bindings.DB.prepare("DROP TABLE IF EXISTS runtime_testlets"),
     bindings.DB.prepare("DROP TABLE IF EXISTS studies"),
@@ -149,17 +188,26 @@ async function applySchema(): Promise<void> {
     bindings.DB.prepare("DROP TABLE IF EXISTS d1_migrations")
   ]);
   await applyD1Migrations(bindings.DB, bindings.TEST_MIGRATIONS);
+  schemaGeneration += 1;
 }
 
 async function seedReadySyntheticRelease(
   {
     corruptTestletOrdinal,
+    swapFirstJaAssignments = false,
+    unbalancedRouteOrder = false,
     appVersion = APP_VERSION,
-    publicBuildManifestSha256 = PUBLIC_BUILD_MANIFEST_SHA256
+    publicBuildManifestSha256 = PUBLIC_BUILD_MANIFEST_SHA256,
+    participantHmacKeyFingerprint = PARTICIPANT_HMAC_KEY_FINGERPRINT,
+    completionCodeFingerprint = COMPLETION_CODE_FINGERPRINT
   }: {
     corruptTestletOrdinal?: number;
+    swapFirstJaAssignments?: boolean;
+    unbalancedRouteOrder?: boolean;
     appVersion?: string;
     publicBuildManifestSha256?: string;
+    participantHmacKeyFingerprint?: string;
+    completionCodeFingerprint?: string;
   } = {}
 ): Promise<void> {
   const now = "2026-07-20T00:00:00.000Z";
@@ -167,9 +215,10 @@ async function seedReadySyntheticRelease(
     bindings.DB.prepare(`
       INSERT INTO runtime_releases (
         release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
+        allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
         expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 100, 300, 9, 0, ?, ?)
     `).bind(
       RELEASE_ID,
       appVersion,
@@ -177,8 +226,12 @@ async function seedReadySyntheticRelease(
       RUNTIME_MANIFEST_SHA256,
       BANK_SHA256,
       ROUTES_SHA256,
-      PARTICIPANT_HMAC_KEY_FINGERPRINT,
-      COMPLETION_CODE_FINGERPRINT,
+      ALLOCATION_SCHEDULE_SHA256,
+      RANDOMIZATION_SEED_FINGERPRINT,
+      RANDOMIZATION_ALGORITHM,
+      OPTION_LAYOUT_ALGORITHM,
+      participantHmacKeyFingerprint,
+      completionCodeFingerprint,
       COMPLETION_ACTION,
       now,
       now
@@ -222,26 +275,61 @@ async function seedReadySyntheticRelease(
   await runInBatches(testletStatements);
 
   const routeStatements: D1PreparedStatement[] = [];
+  const routeOrders = evenOrderWilliamsSquareForTest(10);
   for (let routeIndex = 0; routeIndex < 10; routeIndex += 1) {
     const routeId = `R${String(routeIndex + 1).padStart(2, "0")}`;
-    for (let ordinal = 0; ordinal < 100; ordinal += 1) {
-      const shiftedOrdinal = (ordinal + routeIndex * 10) % 100;
-      routeStatements.push(bindings.DB.prepare(`
-        INSERT INTO runtime_route_testlets (
-          release_id, route_id, testlet_ordinal, module_position,
-          testlet_position_within_module, testlet_id
-        ) VALUES (?, ?, ?, ?, ?, ?)
-      `).bind(
-        RELEASE_ID,
-        routeId,
-        ordinal,
-        Math.floor(ordinal / 10) + 1,
-        ordinal % 10 + 1,
-        syntheticTestlet(shiftedOrdinal).testletId
-      ));
+    const moduleOrder = routeOrders[routeIndex];
+    const withinModuleOrder = unbalancedRouteOrder
+      ? routeOrders[0]
+      : routeOrders[routeIndex];
+    for (let modulePosition = 0; modulePosition < 10; modulePosition += 1) {
+      const moduleIndex = moduleOrder[modulePosition];
+      for (let withinModulePosition = 0; withinModulePosition < 10; withinModulePosition += 1) {
+        const ordinal = modulePosition * 10 + withinModulePosition;
+        const canonicalTestletOrdinal = moduleIndex * 10 + withinModuleOrder[withinModulePosition];
+        routeStatements.push(bindings.DB.prepare(`
+          INSERT INTO runtime_route_testlets (
+            release_id, route_id, testlet_ordinal, module_position,
+            testlet_position_within_module, testlet_id
+          ) VALUES (?, ?, ?, ?, ?, ?)
+        `).bind(
+          RELEASE_ID,
+          routeId,
+          ordinal,
+          modulePosition + 1,
+          withinModulePosition + 1,
+          syntheticTestlet(canonicalTestletOrdinal).testletId
+        ));
+      }
     }
   }
   await runInBatches(routeStatements);
+
+  const allocationStatements: D1PreparedStatement[] = [];
+  for (const l1 of ["ja", "vi"] as const) {
+    for (let allocationIndex = 0; allocationIndex < 300; allocationIndex += 1) {
+      const slot = syntheticAllocationSlot(l1, allocationIndex);
+      const assignmentIndex = swapFirstJaAssignments && l1 === "ja" && allocationIndex < 2
+        ? 1 - allocationIndex
+        : allocationIndex;
+      const assignment = syntheticAllocationSlot(l1, assignmentIndex);
+      allocationStatements.push(bindings.DB.prepare(`
+        INSERT INTO runtime_allocation_slots (
+          release_id, l1, allocation_index, randomization_block,
+          block_position, route_id, option_layout_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        RELEASE_ID,
+        l1,
+        allocationIndex,
+        slot.randomizationBlock,
+        slot.blockPosition,
+        assignment.routeId,
+        assignment.optionLayoutId
+      ));
+    }
+  }
+  await runInBatches(allocationStatements);
 
   await bindings.DB.batch([
     bindings.DB.prepare("UPDATE studies SET active = 1 WHERE study_id = ? AND release_id = ?")
@@ -293,6 +381,53 @@ function installProlificSubmissionMock({
       status: "ACTIVE"
     });
   });
+}
+
+interface MockProlificIdentity {
+  participantId: string;
+  submissionId: string;
+}
+
+function installProlificMatrixMock(
+  studyId: string,
+  identities: readonly MockProlificIdentity[]
+): ReturnType<typeof vi.spyOn> {
+  const identityBySubmission = new Map(identities.map((identity) => [identity.submissionId, identity]));
+  return vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const target = typeof input === "string"
+      ? input
+      : input instanceof URL
+        ? input.toString()
+        : input.url;
+    expect(init?.method).toBe("GET");
+    expect(new Headers(init?.headers).get("authorization")).toBe("Token test-only-prolific-token");
+    if (target === `https://api.prolific.com/api/v1/studies/${studyId}/`) {
+      return Response.json({
+        id: studyId,
+        prolific_id_option: "url_parameters",
+        is_ready_to_publish: true,
+        completion_codes: [{
+          code: COMPLETION_CODE,
+          code_type: "COMPLETED",
+          actions: [{ action: COMPLETION_ACTION }]
+        }]
+      });
+    }
+    const submissionMatch = target.match(/^https:\/\/api\.prolific\.com\/api\/v1\/submissions\/([0-9a-f]{24})\/$/);
+    expect(submissionMatch).not.toBeNull();
+    const identity = identityBySubmission.get(submissionMatch![1]);
+    expect(identity).toBeDefined();
+    return Response.json({
+      id: identity!.submissionId,
+      participant_id: identity!.participantId,
+      study_id: studyId,
+      status: "ACTIVE"
+    });
+  });
+}
+
+function prolificHexId(value: number): string {
+  return value.toString(16).padStart(24, "0");
 }
 
 function assertNoRawLinkIdentifiers(value: unknown): void {
@@ -355,6 +490,31 @@ afterEach(() => {
 });
 
 describe("UVLT Cloudflare field Worker", () => {
+  it("uses six canonical-first Williams option layouts with exact position and carryover balance", () => {
+    const layouts = Array.from({ length: 6 }, (_value, layoutId) => [...optionPermutationForLayout(layoutId)]);
+    expect(layouts).toEqual([
+      [0, 1, 2, 3, 4, 5],
+      [1, 3, 0, 5, 2, 4],
+      [3, 5, 1, 4, 0, 2],
+      [5, 4, 3, 2, 1, 0],
+      [4, 2, 5, 0, 3, 1],
+      [2, 0, 4, 1, 5, 3]
+    ]);
+    for (let position = 0; position < 6; position += 1) {
+      expect(new Set(layouts.map((layout) => layout[position]))).toEqual(new Set([0, 1, 2, 3, 4, 5]));
+    }
+    const directedPairs = new Map<string, number>();
+    for (const layout of layouts) {
+      for (let position = 0; position < 5; position += 1) {
+        const key = `${layout[position]}->${layout[position + 1]}`;
+        directedPairs.set(key, (directedPairs.get(key) ?? 0) + 1);
+      }
+    }
+    expect(directedPairs.size).toBe(30);
+    expect([...directedPairs.values()].every((count) => count === 1)).toBe(true);
+    expect(() => optionPermutationForLayout(6)).toThrow(/Invalid option layout ID/);
+  });
+
   it("applies the real migration and remains fail-closed under the checked-in configuration", async () => {
     await applySchema();
 
@@ -362,12 +522,13 @@ describe("UVLT Cloudflare field Worker", () => {
       SELECT name FROM sqlite_schema
       WHERE type = 'table' AND name IN (
         'runtime_releases', 'studies', 'runtime_testlets', 'runtime_route_testlets',
-        'sessions', 'testlet_submissions', 'responses', 'session_events'
+        'runtime_allocation_slots', 'sessions', 'testlet_submissions', 'responses', 'session_events'
       )
       ORDER BY name
     `).all<{ name: string }>();
     expect(tables.results.map(({ name }) => name)).toEqual([
       "responses",
+      "runtime_allocation_slots",
       "runtime_releases",
       "runtime_route_testlets",
       "runtime_testlets",
@@ -417,8 +578,11 @@ describe("UVLT Cloudflare field Worker", () => {
       fieldEnvironment({ EXPECTED_RUNTIME_MANIFEST_SHA256: "4".repeat(64) }),
       fieldEnvironment({ EXPECTED_BANK_SHA256: "4".repeat(64) }),
       fieldEnvironment({ EXPECTED_ROUTES_SHA256: "4".repeat(64) }),
+      fieldEnvironment({ EXPECTED_ALLOCATION_SCHEDULE_SHA256: "5".repeat(64) }),
       fieldEnvironment({ EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT: `sha256:${"4".repeat(64)}` }),
+      fieldEnvironment({ EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT: `sha256:${"0".repeat(64)}` }),
       fieldEnvironment({ EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT: `sha256:${"4".repeat(64)}` }),
+      fieldEnvironment({ EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT: `sha256:${"0".repeat(64)}` }),
       fieldEnvironment({ EXPECTED_PROLIFIC_COMPLETION_ACTION: "AUTOMATICALLY_APPROVE" }),
       fieldEnvironment({ PARTICIPANT_HMAC_KEY: "different-test-only-hmac-key-with-at-least-32-bytes" }),
       fieldEnvironment({ PROLIFIC_COMPLETION_CODE: "OTHER123" }),
@@ -442,6 +606,110 @@ describe("UVLT Cloudflare field Worker", () => {
       SET participant_hmac_key_fingerprint = ?
       WHERE release_id = ?
     `).bind(`sha256:${"5".repeat(64)}`, RELEASE_ID).run()).rejects.toThrow();
+  });
+
+  it("uses the frozen schedule with complete L1-route-layout crossing instead of allocation modulo", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+
+    const firstSlot = await bindings.DB.prepare(`
+      SELECT allocation_index, randomization_block, block_position, route_id, option_layout_id
+      FROM runtime_allocation_slots
+      WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+    `).bind(RELEASE_ID).first<{
+      allocation_index: number;
+      randomization_block: number;
+      block_position: number;
+      route_id: string;
+      option_layout_id: number;
+    }>();
+    expect(firstSlot).toEqual({
+      allocation_index: 0,
+      randomization_block: 0,
+      block_position: 1,
+      route_id: "R07",
+      option_layout_id: 2
+    });
+    expect(firstSlot?.route_id).not.toBe("R01");
+
+    const blocks = await bindings.DB.prepare(`
+      SELECT l1, randomization_block, COUNT(*) AS slots,
+        COUNT(DISTINCT route_id) AS routes, COUNT(DISTINCT option_layout_id) AS layouts
+      FROM runtime_allocation_slots
+      WHERE release_id = ?
+      GROUP BY l1, randomization_block
+      ORDER BY l1, randomization_block
+    `).bind(RELEASE_ID).all<{
+      l1: string;
+      randomization_block: number;
+      slots: number;
+      routes: number;
+      layouts: number;
+    }>();
+    expect(blocks.results).toHaveLength(60);
+    expect(blocks.results.every((block) => block.slots === 10 && block.routes === 10 && block.layouts === 6)).toBe(true);
+
+    const routeLayoutCells = await bindings.DB.prepare(`
+      SELECT l1, route_id, option_layout_id, COUNT(*) AS allocations
+      FROM runtime_allocation_slots
+      WHERE release_id = ?
+      GROUP BY l1, route_id, option_layout_id
+    `).bind(RELEASE_ID).all<{
+      l1: string;
+      route_id: string;
+      option_layout_id: number;
+      allocations: number;
+    }>();
+    expect(routeLayoutCells.results).toHaveLength(120);
+    expect(routeLayoutCells.results.every((cell) => cell.allocations === 5)).toBe(true);
+  });
+
+  it("fails closed when structurally balanced D1 slots do not reproduce the pinned schedule hash", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease({ swapFirstJaAssignments: true });
+    const response = await requestWorker("/api/config", {}, fieldEnvironment());
+    expect(response.status).toBe(200);
+    expect(await responseJson(response)).toMatchObject({ ok: true, collection_enabled: false });
+  });
+
+  it("caches only successful immutable runtime verification while repeating small readiness checks", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const preparedSql: string[] = [];
+    const countedDb = new Proxy(bindings.DB, {
+      get(target, property) {
+        if (property === "prepare") {
+          return (query: string) => {
+            preparedSql.push(query);
+            return target.prepare(query);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      }
+    });
+    const fieldEnv = fieldEnvironment({ DB: countedDb });
+    const first = await requestWorker("/api/config", {}, fieldEnv);
+    expect(await responseJson(first)).toMatchObject({ ok: true, collection_enabled: true });
+    const largeScanCount = () => preparedSql.filter((query) =>
+      /FROM runtime_(?:testlets|route_testlets|allocation_slots)\b/.test(query)).length;
+    expect(largeScanCount()).toBe(3);
+
+    const second = await requestWorker("/api/config", {}, fieldEnv);
+    expect(await responseJson(second)).toMatchObject({ ok: true, collection_enabled: true });
+    expect(largeScanCount()).toBe(3);
+    expect(preparedSql.filter((query) => query.includes("FROM runtime_releases r"))).toHaveLength(2);
+  });
+
+  it("rejects all-zero linkage fingerprints at both Worker and active-release boundaries", async () => {
+    await applySchema();
+    await expect(seedReadySyntheticRelease({
+      participantHmacKeyFingerprint: `sha256:${"0".repeat(64)}`,
+      completionCodeFingerprint: `sha256:${"0".repeat(64)}`
+    })).rejects.toThrow();
+    expect(await bindings.DB.prepare(
+      "SELECT active FROM runtime_releases WHERE release_id = ?"
+    ).bind(RELEASE_ID).first<{ active: number }>()).toEqual({ active: 0 });
   });
 
   it("rejects launch before allocation when the live Prolific completion configuration is not exact", async () => {
@@ -527,6 +795,15 @@ describe("UVLT Cloudflare field Worker", () => {
     ).bind(RELEASE_ID).first<{ active: number }>()).toEqual({ active: 0 });
 
     await expect(bindings.DB.prepare(`
+      UPDATE runtime_releases SET randomization_algorithm = 'unsupported-randomization'
+      WHERE release_id = ?
+    `).bind(RELEASE_ID).run()).rejects.toThrow();
+    await expect(bindings.DB.prepare(`
+      UPDATE runtime_releases SET option_layout_algorithm = 'unsupported-layout'
+      WHERE release_id = ?
+    `).bind(RELEASE_ID).run()).rejects.toThrow();
+
+    await expect(bindings.DB.prepare(`
       INSERT INTO runtime_releases (
         release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,
         participant_hmac_key_fingerprint, prolific_completion_code_fingerprint, prolific_completion_action,
@@ -593,6 +870,20 @@ describe("UVLT Cloudflare field Worker", () => {
       ["route delete", bindings.DB.prepare(`
         DELETE FROM runtime_route_testlets
         WHERE release_id = ? AND route_id = 'R01' AND testlet_ordinal = 0
+      `).bind(RELEASE_ID)],
+      ["allocation insert", bindings.DB.prepare(`
+        INSERT INTO runtime_allocation_slots (
+          release_id, l1, allocation_index, randomization_block,
+          block_position, route_id, option_layout_id
+        ) VALUES (?, 'ja', 0, 0, 1, 'R07', 2)
+      `).bind(RELEASE_ID)],
+      ["allocation update", bindings.DB.prepare(`
+        UPDATE runtime_allocation_slots SET route_id = 'R01'
+        WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
+      `).bind(RELEASE_ID)],
+      ["allocation delete", bindings.DB.prepare(`
+        DELETE FROM runtime_allocation_slots
+        WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 0
       `).bind(RELEASE_ID)]
     ];
     for (const [label, statement] of mutationStatements) {
@@ -604,14 +895,120 @@ describe("UVLT Cloudflare field Worker", () => {
         (SELECT COUNT(*) FROM runtime_releases WHERE release_id = ? AND active = 1 AND app_version = ?) AS releases,
         (SELECT COUNT(*) FROM studies WHERE release_id = ? AND active = 1) AS studies,
         (SELECT COUNT(*) FROM runtime_testlets WHERE release_id = ?) AS testlets,
-        (SELECT COUNT(*) FROM runtime_route_testlets WHERE release_id = ?) AS route_rows
-    `).bind(RELEASE_ID, APP_VERSION, RELEASE_ID, RELEASE_ID, RELEASE_ID).first<{
+        (SELECT COUNT(*) FROM runtime_route_testlets WHERE release_id = ?) AS route_rows,
+        (SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = ?) AS allocation_slots
+    `).bind(RELEASE_ID, APP_VERSION, RELEASE_ID, RELEASE_ID, RELEASE_ID, RELEASE_ID).first<{
       releases: number;
       studies: number;
       testlets: number;
       route_rows: number;
+      allocation_slots: number;
     }>();
-    expect(frozenCounts).toEqual({ releases: 1, studies: 2, testlets: 100, route_rows: 1000 });
+    expect(frozenCounts).toEqual({ releases: 1, studies: 2, testlets: 100, route_rows: 1000, allocation_slots: 600 });
+  });
+
+  it("freezes session assignment and validates stored choice positions at the D1 boundary", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const sessionId = "33333333-3333-4333-8333-333333333333";
+    const firstSlot = await bindings.DB.prepare(`
+      SELECT allocation_index, randomization_block, block_position, route_id, option_layout_id
+      FROM runtime_allocation_slots
+      WHERE release_id = ? AND l1 = 'vi' AND allocation_index = 0
+    `).bind(RELEASE_ID).first<{
+      allocation_index: number;
+      randomization_block: number;
+      block_position: number;
+      route_id: string;
+      option_layout_id: number;
+    }>();
+    expect(firstSlot).not.toBeNull();
+    await bindings.DB.prepare(`
+      INSERT INTO sessions (
+        session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
+        allocation_index, randomization_block, block_position, route_id, option_layout_id,
+        token_sha256, token_expires_at, created_at, updated_at
+      ) VALUES (?, ?, ?, 'vi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      sessionId,
+      RELEASE_ID,
+      VI_STUDY_ID,
+      "7".repeat(64),
+      "8".repeat(64),
+      firstSlot!.allocation_index,
+      firstSlot!.randomization_block,
+      firstSlot!.block_position,
+      firstSlot!.route_id,
+      firstSlot!.option_layout_id,
+      "9".repeat(64),
+      "2026-07-21T00:00:00.000Z",
+      "2026-07-20T00:00:00.000Z",
+      "2026-07-20T00:00:00.000Z"
+    ).run();
+
+    const secondSlot = await bindings.DB.prepare(`
+      SELECT allocation_index, randomization_block, block_position, route_id, option_layout_id
+      FROM runtime_allocation_slots
+      WHERE release_id = ? AND l1 = 'vi' AND allocation_index = 1
+    `).bind(RELEASE_ID).first<typeof firstSlot>();
+    await expect(bindings.DB.prepare(`
+      UPDATE sessions SET
+        allocation_index = ?, randomization_block = ?, block_position = ?,
+        route_id = ?, option_layout_id = ?
+      WHERE session_id = ?
+    `).bind(
+      secondSlot!.allocation_index,
+      secondSlot!.randomization_block,
+      secondSlot!.block_position,
+      secondSlot!.route_id,
+      secondSlot!.option_layout_id,
+      sessionId
+    ).run()).rejects.toThrow();
+
+    const runtime = await bindings.DB.prepare(`
+      SELECT rr.testlet_id, t.options_json, t.items_json
+      FROM runtime_route_testlets rr
+      JOIN runtime_testlets t ON t.release_id = rr.release_id AND t.testlet_id = rr.testlet_id
+      WHERE rr.release_id = ? AND rr.route_id = ? AND rr.testlet_ordinal = 0
+    `).bind(RELEASE_ID, firstSlot!.route_id).first<{
+      testlet_id: string;
+      options_json: string;
+      items_json: string;
+    }>();
+    const options = JSON.parse(runtime!.options_json) as string[];
+    const items = JSON.parse(runtime!.items_json) as Array<{ itemId: string }>;
+    const firstDisplayedOption = options[optionPermutationForLayout(firstSlot!.option_layout_id)[0]];
+    await bindings.DB.prepare(`
+      INSERT INTO testlet_submissions (
+        session_id, testlet_ordinal, testlet_id, option_layout_id, idempotency_key,
+        payload_sha256, client_started_at, client_submitted_at, elapsed_ms, received_at
+      ) VALUES (?, 0, ?, ?, 'direct-boundary-test', ?, ?, ?, 1000, ?)
+    `).bind(
+      sessionId,
+      runtime!.testlet_id,
+      firstSlot!.option_layout_id,
+      "a".repeat(64),
+      "2026-07-20T00:00:01.000Z",
+      "2026-07-20T00:00:02.000Z",
+      "2026-07-20T00:00:02.000Z"
+    ).run();
+
+    const responseStatement = (displayedPosition: number) => bindings.DB.prepare(`
+      INSERT INTO responses (
+        session_id, response_ordinal, testlet_ordinal, testlet_id, item_id,
+        item_position_within_testlet, selected_option, selected_option_position, recorded_at
+      ) VALUES (?, 1, 0, ?, ?, 1, ?, ?, '2026-07-20T00:00:02.000Z')
+    `).bind(sessionId, runtime!.testlet_id, items[0].itemId, firstDisplayedOption, displayedPosition);
+    await expect(responseStatement(2).run()).rejects.toThrow();
+    expect((await responseStatement(1).run()).meta.changes).toBe(1);
+    await expect(bindings.DB.prepare(`
+      UPDATE responses SET selected_option_position = 2
+      WHERE session_id = ? AND response_ordinal = 1
+    `).bind(sessionId).run()).rejects.toThrow();
+    await expect(bindings.DB.prepare(`
+      UPDATE testlet_submissions SET elapsed_ms = 1001
+      WHERE session_id = ? AND testlet_ordinal = 0
+    `).bind(sessionId).run()).rejects.toThrow();
   });
 
   it("allows one-way emergency study closure and fails collection closed", async () => {
@@ -661,23 +1058,39 @@ describe("UVLT Cloudflare field Worker", () => {
     `).bind(JA_STUDY_ID, RELEASE_ID).run()).rejects.toThrow();
   });
 
-  it("fails closed before serving a testlet whose canonical content hash differs", async () => {
+  it("fails closed before allocation when any canonical testlet content hash differs", async () => {
     await applySchema();
-    await seedReadySyntheticRelease({ corruptTestletOrdinal: 0 });
+    await seedReadySyntheticRelease({ corruptTestletOrdinal: 88 });
     const fieldEnv = fieldEnvironment();
-    installProlificSubmissionMock();
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const cookie = await launchSyntheticSession(fieldEnv);
+    const configResponse = await requestWorker("/api/config", {}, fieldEnv);
+    expect(await responseJson(configResponse)).toMatchObject({ ok: true, collection_enabled: false });
+    const launchResponse = await requestWorker(
+      `/join?PROLIFIC_PID=${PARTICIPANT_ID}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${SUBMISSION_ID}`,
+      {},
+      fieldEnv
+    );
+    expect(launchResponse.status).toBe(303);
+    expect(launchResponse.headers.get("set-cookie")).toBeNull();
+    expect(await bindings.DB.prepare("SELECT COUNT(*) AS count FROM sessions").first<{ count: number }>())
+      .toEqual({ count: 0 });
+  });
 
-    const stateResponse = await requestWorker("/api/session/state", {
-      headers: { Cookie: cookie, Origin: ORIGIN, "Sec-Fetch-Site": "same-origin" }
-    }, fieldEnv);
-    expect(stateResponse.status).toBe(500);
-    expect(await responseJson(stateResponse)).toMatchObject({
-      ok: false,
-      code: "INTERNAL_ERROR",
-      retryable: true
-    });
+  it("fails closed before allocation when route rows lose within-module Williams balance", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease({ unbalancedRouteOrder: true });
+    const fieldEnv = fieldEnvironment();
+    const configResponse = await requestWorker("/api/config", {}, fieldEnv);
+    expect(await responseJson(configResponse)).toMatchObject({ ok: true, collection_enabled: false });
+    const launchResponse = await requestWorker(
+      `/join?PROLIFIC_PID=${PARTICIPANT_ID}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${SUBMISSION_ID}`,
+      {},
+      fieldEnv
+    );
+    expect(launchResponse.status).toBe(303);
+    expect(launchResponse.headers.get("set-cookie")).toBeNull();
+    expect(await bindings.DB.prepare("SELECT COUNT(*) AS count FROM sessions").first<{ count: number }>())
+      .toEqual({ count: 0 });
   });
 
   it("verifies Prolific, requires the current cookie to resume one private session, and withholds completion", async () => {
@@ -729,21 +1142,31 @@ describe("UVLT Cloudflare field Worker", () => {
         kind: "testlet",
         testlet_ordinal: 0,
         module_position: 1,
-        testlet_position_within_module: 1,
-        testlet: {
-          testletId: "synthetic-testlet-000"
-        }
+        testlet_position_within_module: 1
       }
     });
     const nextStep = state.next_step as Record<string, unknown>;
-    const exposedTestlet = nextStep.testlet as { options: unknown[]; items: unknown[] };
-    expect(exposedTestlet.options).toHaveLength(6);
-    expect(exposedTestlet.items).toHaveLength(3);
+    const exposedTestlet = nextStep.testlet as { options: string[]; items: Array<{ prompt: string }> };
+    expect(Object.keys(exposedTestlet).sort()).toEqual(["items", "options"]);
+    expect(exposedTestlet.options).toEqual([
+      "option-88-4", "option-88-6", "option-88-2",
+      "option-88-5", "option-88-1", "option-88-3"
+    ]);
+    expect(exposedTestlet.items).toEqual([
+      { prompt: "Synthetic prompt 89.1" },
+      { prompt: "Synthetic prompt 89.2" },
+      { prompt: "Synthetic prompt 89.3" }
+    ]);
     expect(state).not.toHaveProperty("session_id");
     expect(state).not.toHaveProperty("study_id");
     expect(state).not.toHaveProperty("route_id");
-    expect(JSON.stringify(state)).not.toMatch(/answer|correct|score|theta|ability|difficulty|discrimination|guessing/i);
-    expect(JSON.stringify(state)).not.toContain(COMPLETION_CODE);
+    expect(state).not.toHaveProperty("option_layout_id");
+    expect(state).not.toHaveProperty("randomization_block");
+    expect(state).not.toHaveProperty("block_position");
+    const serializedState = JSON.stringify(state);
+    expect(serializedState).not.toMatch(/answer|correct|score|theta|ability|difficulty|discrimination|guessing/i);
+    expect(serializedState).not.toMatch(/synthetic-(?:testlet|item)-|uvlt_[ab]_[1-5]k_/i);
+    expect(serializedState).not.toContain(COMPLETION_CODE);
     assertNoRawLinkIdentifiers(state);
 
     const noCookieResume = await requestWorker(launchPath, {}, fieldEnv);
@@ -771,16 +1194,26 @@ describe("UVLT Cloudflare field Worker", () => {
     assertNoRawLinkIdentifiers(secondCookie);
 
     const sessions = await bindings.DB.prepare(`
-      SELECT participant_link_hmac, submission_link_hmac, allocation_index, route_id
+      SELECT participant_link_hmac, submission_link_hmac, allocation_index,
+        randomization_block, block_position, route_id, option_layout_id
       FROM sessions WHERE release_id = ?
     `).bind(RELEASE_ID).all<{
       participant_link_hmac: string;
       submission_link_hmac: string;
       allocation_index: number;
+      randomization_block: number;
+      block_position: number;
       route_id: string;
+      option_layout_id: number;
     }>();
     expect(sessions.results).toHaveLength(1);
-    expect(sessions.results[0]).toMatchObject({ allocation_index: 0, route_id: "R01" });
+    expect(sessions.results[0]).toMatchObject({
+      allocation_index: 0,
+      randomization_block: 0,
+      block_position: 1,
+      route_id: "R07",
+      option_layout_id: 2
+    });
     expect(sessions.results[0].participant_link_hmac).toMatch(HEX_64);
     expect(sessions.results[0].submission_link_hmac).toMatch(HEX_64);
     expect(JSON.stringify(sessions.results[0])).not.toContain(PARTICIPANT_ID);
@@ -792,6 +1225,14 @@ describe("UVLT Cloudflare field Worker", () => {
     expect(staleState.status).toBe(401);
 
     const secondCookiePair = secondCookie!.split(";", 1)[0];
+    const resumedStateResponse = await requestWorker("/api/session/state", {
+      headers: { Cookie: secondCookiePair, Origin: ORIGIN, "Sec-Fetch-Site": "same-origin" }
+    }, fieldEnv);
+    expect(resumedStateResponse.status).toBe(200);
+    const resumedState = await responseJson(resumedStateResponse);
+    const resumedTestlet = (resumedState.next_step as Record<string, unknown>).testlet as { options: string[] };
+    expect(resumedTestlet.options).toEqual(exposedTestlet.options);
+    expect(resumedState).not.toHaveProperty("option_layout_id");
     const completionResponse = await requestWorker("/api/session/complete", {
       method: "POST",
       headers: {
@@ -824,6 +1265,189 @@ describe("UVLT Cloudflare field Worker", () => {
     assertNoRawLinkIdentifiers(logged);
   });
 
+  it("allocates one complete block without duplicate slots under concurrent joins", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const fieldEnv = fieldEnvironment();
+    const warmup = await requestWorker("/api/config", {}, fieldEnv);
+    expect(await responseJson(warmup)).toMatchObject({ ok: true, collection_enabled: true });
+    const identities = Array.from({ length: 10 }, (_value, index) => ({
+      participantId: prolificHexId(0x100 + index),
+      submissionId: prolificHexId(0x1000 + index)
+    }));
+    installProlificMatrixMock(JA_STUDY_ID, identities);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const joins = await Promise.all(identities.map((identity) => requestWorker(
+      `/join?PROLIFIC_PID=${identity.participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identity.submissionId}`,
+      {},
+      fieldEnv
+    )));
+    expect(joins.every((response) => response.status === 303 && response.headers.get("set-cookie") !== null)).toBe(true);
+    const cookies = joins.map((response) => response.headers.get("set-cookie")!.split(";", 1)[0]);
+    expect(new Set(cookies).size).toBe(10);
+
+    const sessions = await bindings.DB.prepare(`
+      SELECT allocation_index, randomization_block, block_position, route_id, option_layout_id
+      FROM sessions
+      WHERE release_id = ? AND l1 = 'ja'
+      ORDER BY allocation_index
+    `).bind(RELEASE_ID).all<{
+      allocation_index: number;
+      randomization_block: number;
+      block_position: number;
+      route_id: string;
+      option_layout_id: number;
+    }>();
+    expect(sessions.results).toHaveLength(10);
+    expect(sessions.results.map((session) => session.allocation_index)).toEqual(
+      Array.from({ length: 10 }, (_value, index) => index)
+    );
+    expect(new Set(sessions.results.map((session) => session.route_id)).size).toBe(10);
+    sessions.results.forEach((session, allocationIndex) => {
+      expect(session).toEqual({
+        allocation_index: allocationIndex,
+        randomization_block: syntheticAllocationSlot("ja", allocationIndex).randomizationBlock,
+        block_position: syntheticAllocationSlot("ja", allocationIndex).blockPosition,
+        route_id: syntheticAllocationSlot("ja", allocationIndex).routeId,
+        option_layout_id: syntheticAllocationSlot("ja", allocationIndex).optionLayoutId
+      });
+    });
+  });
+
+  it("allocates slot 299 exactly once and then closes the 300-start L1 capacity", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const now = "2026-07-20T00:00:00.000Z";
+    const existingSessions: D1PreparedStatement[] = [];
+    for (let allocationIndex = 0; allocationIndex < 299; allocationIndex += 1) {
+      const slot = syntheticAllocationSlot("ja", allocationIndex);
+      existingSessions.push(bindings.DB.prepare(`
+        INSERT INTO sessions (
+          session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
+          allocation_index, randomization_block, block_position, route_id, option_layout_id,
+          token_sha256, token_expires_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'ja', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).bind(
+        `capacity-session-${String(allocationIndex).padStart(3, "0")}`,
+        RELEASE_ID,
+        JA_STUDY_ID,
+        (allocationIndex + 1).toString(16).padStart(64, "0"),
+        (allocationIndex + 1001).toString(16).padStart(64, "0"),
+        allocationIndex,
+        slot.randomizationBlock,
+        slot.blockPosition,
+        slot.routeId,
+        slot.optionLayoutId,
+        (allocationIndex + 2001).toString(16).padStart(64, "0"),
+        "2026-07-21T00:00:00.000Z",
+        now,
+        now
+      ));
+    }
+    await runInBatches(existingSessions);
+    const identities = [
+      { participantId: prolificHexId(0x300), submissionId: prolificHexId(0x3000) },
+      { participantId: prolificHexId(0x301), submissionId: prolificHexId(0x3001) }
+    ];
+    const fieldEnv = fieldEnvironment();
+    installProlificMatrixMock(JA_STUDY_ID, identities);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const finalJoin = await requestWorker(
+      `/join?PROLIFIC_PID=${identities[0].participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identities[0].submissionId}`,
+      {},
+      fieldEnv
+    );
+    expect(finalJoin.headers.get("set-cookie")).not.toBeNull();
+    const finalSlot = await bindings.DB.prepare(`
+      SELECT allocation_index, randomization_block, block_position, route_id, option_layout_id
+      FROM sessions WHERE release_id = ? AND l1 = 'ja' AND allocation_index = 299
+    `).bind(RELEASE_ID).first<{
+      allocation_index: number;
+      randomization_block: number;
+      block_position: number;
+      route_id: string;
+      option_layout_id: number;
+    }>();
+    const expectedFinalSlot = syntheticAllocationSlot("ja", 299);
+    expect(finalSlot).toEqual({
+      allocation_index: 299,
+      randomization_block: expectedFinalSlot.randomizationBlock,
+      block_position: expectedFinalSlot.blockPosition,
+      route_id: expectedFinalSlot.routeId,
+      option_layout_id: expectedFinalSlot.optionLayoutId
+    });
+
+    const overCapacity = await requestWorker(
+      `/join?PROLIFIC_PID=${identities[1].participantId}&STUDY_ID=${JA_STUDY_ID}&SESSION_ID=${identities[1].submissionId}`,
+      {},
+      fieldEnv
+    );
+    expect(overCapacity.status).toBe(303);
+    expect(overCapacity.headers.get("set-cookie")).toBeNull();
+    expect(await bindings.DB.prepare(`
+      SELECT COUNT(*) AS count, MAX(allocation_index) AS maximum
+      FROM sessions WHERE release_id = ? AND l1 = 'ja'
+    `).bind(RELEASE_ID).first<{ count: number; maximum: number }>()).toEqual({ count: 300, maximum: 299 });
+  });
+
+  it("runs a Vietnamese-L1 launch, private state, and response save end to end", async () => {
+    await applySchema();
+    await seedReadySyntheticRelease();
+    const fieldEnv = fieldEnvironment();
+    const identity = { participantId: prolificHexId(0x200), submissionId: prolificHexId(0x2000) };
+    installProlificMatrixMock(VI_STUDY_ID, [identity]);
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const join = await requestWorker(
+      `/join?PROLIFIC_PID=${identity.participantId}&STUDY_ID=${VI_STUDY_ID}&SESSION_ID=${identity.submissionId}`,
+      {},
+      fieldEnv
+    );
+    expect(join.status).toBe(303);
+    const cookie = join.headers.get("set-cookie")!.split(";", 1)[0];
+    const stateResponse = await requestWorker("/api/session/state", {
+      headers: { Cookie: cookie, Origin: ORIGIN, "Sec-Fetch-Site": "same-origin" }
+    }, fieldEnv);
+    const state = await responseJson(stateResponse);
+    expect(state).toMatchObject({ ok: true, l1: "vi", completed_testlets: 0 });
+    const testlet = (state.next_step as Record<string, unknown>).testlet as {
+      options: string[];
+      items: Array<{ prompt: string }>;
+    };
+    expect(Object.keys(testlet).sort()).toEqual(["items", "options"]);
+    expect(testlet.options).toEqual([
+      "option-0-3", "option-0-1", "option-0-5",
+      "option-0-2", "option-0-6", "option-0-4"
+    ]);
+    expect(JSON.stringify(state)).not.toMatch(/synthetic-(?:testlet|item)-|uvlt_[ab]_[1-5]k_/i);
+
+    const save = await requestWorker(
+      "/api/session/testlet-response",
+      authenticatedJson(cookie, testletSubmissionBody(0, testlet.options.slice(0, 3))),
+      fieldEnv
+    );
+    expect(save.status).toBe(200);
+    expect(await responseJson(save)).toMatchObject({ ok: true, l1: "vi", completed_testlets: 1 });
+    const persisted = await bindings.DB.prepare(`
+      SELECT l1, allocation_index, route_id, option_layout_id, response_count
+      FROM sessions WHERE release_id = ?
+    `).bind(RELEASE_ID).first<{
+      l1: string;
+      allocation_index: number;
+      route_id: string;
+      option_layout_id: number;
+      response_count: number;
+    }>();
+    expect(persisted).toEqual({
+      l1: "vi",
+      allocation_index: 0,
+      route_id: "R01",
+      option_layout_id: 5,
+      response_count: 3
+    });
+  });
+
   it("saves one testlet exactly once and rejects conflicting or out-of-order replays", async () => {
     await applySchema();
     await seedReadySyntheticRelease();
@@ -832,7 +1456,7 @@ describe("UVLT Cloudflare field Worker", () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
     const cookie = await launchSyntheticSession(fieldEnv);
 
-    const firstBody = testletSubmissionBody(0, ["option-0-1", "option-0-2", "option-0-3"]);
+    const firstBody = testletSubmissionBody(0, ["option-88-1", "option-88-2", "option-88-3"]);
     const firstSave = await requestWorker(
       "/api/session/testlet-response",
       authenticatedJson(cookie, firstBody),
@@ -861,7 +1485,7 @@ describe("UVLT Cloudflare field Worker", () => {
       "/api/session/testlet-response",
       authenticatedJson(cookie, {
         ...firstBody,
-        selected_options: ["option-0-1", "option-0-2", "option-0-4"]
+        selected_options: ["option-88-1", "option-88-2", "option-88-4"]
       }),
       fieldEnv
     );
@@ -911,15 +1535,26 @@ describe("UVLT Cloudflare field Worker", () => {
     });
 
     const savedSelections = await bindings.DB.prepare(`
-      SELECT response_ordinal, selected_option
+      SELECT response_ordinal, item_id, selected_option, selected_option_position
       FROM responses
       ORDER BY response_ordinal
-    `).all<{ response_ordinal: number; selected_option: string }>();
+    `).all<{
+      response_ordinal: number;
+      item_id: string;
+      selected_option: string;
+      selected_option_position: number;
+    }>();
     expect(savedSelections.results).toEqual([
-      { response_ordinal: 1, selected_option: "option-0-1" },
-      { response_ordinal: 2, selected_option: "option-0-2" },
-      { response_ordinal: 3, selected_option: "option-0-3" }
+      { response_ordinal: 1, item_id: "synthetic-item-088-1", selected_option: "option-88-1", selected_option_position: 5 },
+      { response_ordinal: 2, item_id: "synthetic-item-088-2", selected_option: "option-88-2", selected_option_position: 3 },
+      { response_ordinal: 3, item_id: "synthetic-item-088-3", selected_option: "option-88-3", selected_option_position: 6 }
     ]);
+
+    const savedSubmission = await bindings.DB.prepare(`
+      SELECT testlet_id, option_layout_id FROM testlet_submissions
+      WHERE testlet_ordinal = 0
+    `).first<{ testlet_id: string; option_layout_id: number }>();
+    expect(savedSubmission).toEqual({ testlet_id: "synthetic-testlet-088", option_layout_id: 2 });
 
     await bindings.DB.prepare(`
       UPDATE sessions SET token_expires_at = '2000-01-01T00:00:00.000Z'

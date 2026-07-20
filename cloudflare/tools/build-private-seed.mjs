@@ -1,7 +1,15 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { chmod, link, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  RANDOMIZATION_ALGORITHM,
+  OPTION_LAYOUT_ALGORITHM,
+  stableStringify,
+  sha256Hex,
+  payloadSha256,
+  validateAllocationSchedule,
+  validateWilliamsRouteBalance
+} from "./randomization-design.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const project = path.resolve(here, "../..");
@@ -14,8 +22,8 @@ for (let index = 2; index < process.argv.length; index += 1) {
     requireActive = true;
     continue;
   }
-  if (!["--config", "--output"].includes(key)) {
-    throw new Error("Arguments must be --config <path>, --output <path>, and/or --require-active");
+  if (!["--config", "--output", "--allocation-schedule"].includes(key)) {
+    throw new Error("Arguments must be --config <path>, --output <path>, --allocation-schedule <path>, and/or --require-active");
   }
   const value = process.argv[index + 1];
   if (value === undefined || value.startsWith("--")) throw new Error(`${key} requires a path`);
@@ -25,34 +33,21 @@ for (let index = 2; index < process.argv.length; index += 1) {
 }
 
 const configPath = path.resolve(project, argumentsMap.get("--config") || "cloudflare/release-config.example.json");
-const outputPath = path.resolve(project, argumentsMap.get("--output") || "cloudflare/private/runtime-seed.sql");
+// Keep an inactive/example preview physically distinct from the frozen active
+// release seed. Both outputs are no-clobber, so reusing the production name for
+// an early preview would intentionally prevent a later, different active seed.
+const outputPath = path.resolve(project, argumentsMap.get("--output") || "cloudflare/private/runtime-seed.preview.sql");
+const allocationSchedulePath = path.resolve(
+  project,
+  argumentsMap.get("--allocation-schedule") || "cloudflare/private/randomization-schedule.json"
+);
 const dataDirectory = path.join(project, "data");
 const privateDirectory = path.join(project, "cloudflare", "private");
 const privateOutputRelative = path.relative(privateDirectory, outputPath);
 assert(privateOutputRelative && !privateOutputRelative.startsWith("..") && !path.isAbsolute(privateOutputRelative), "Seed output must be a file inside cloudflare/private");
-
-function stableStringify(value) {
-  if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("Non-finite number in release input");
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  if (value && Object.getPrototypeOf(value) === Object.prototype) {
-    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(",")}}`;
-  }
-  throw new Error("Release input must contain JSON-compatible plain values only");
-}
-
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function payloadHash(artifact) {
-  const copy = structuredClone(artifact);
-  delete copy.integrity.payloadSha256;
-  return sha256(stableStringify(copy));
-}
+const privateScheduleRelative = path.relative(privateDirectory, allocationSchedulePath);
+assert(privateScheduleRelative && !privateScheduleRelative.startsWith("..") && !path.isAbsolute(privateScheduleRelative), "Allocation schedule must be a file inside cloudflare/private");
+const ZERO_SHA256 = "0".repeat(64);
 
 function sql(value) {
   if (value === null || value === undefined) return "NULL";
@@ -119,12 +114,22 @@ async function readJson(file) {
   return JSON.parse(await readFile(file, "utf8"));
 }
 
-const [config, packageMetadata, manifest, bank, routes, publicBuildManifestRawBytes] = await Promise.all([
+async function readOptionalJson(file) {
+  try {
+    return await readJson(file);
+  } catch (error) {
+    if (error?.code === "ENOENT" && !argumentsMap.has("--allocation-schedule")) return null;
+    throw error;
+  }
+}
+
+const [config, packageMetadata, manifest, bank, routes, allocationSchedule, publicBuildManifestRawBytes] = await Promise.all([
   readJson(configPath),
   readJson(path.join(project, "package.json")),
   readJson(path.join(dataDirectory, "runtime-manifest.dev.json")),
   readJson(path.join(dataDirectory, "uvlt_bank.ab.content.dev.json")),
   readJson(path.join(dataDirectory, "uvlt_routes.ab.williams10.dev.json")),
+  readOptionalJson(allocationSchedulePath),
   readFile(path.join(project, "dist", "build-manifest.json"))
 ]);
 let publicBuildManifest;
@@ -138,8 +143,13 @@ const [bankRawBytes, routesRawBytes] = await Promise.all([
   readFile(path.join(dataDirectory, "uvlt_routes.ab.williams10.dev.json"))
 ]);
 
-assertExactKeys(config, ["schemaVersion", "releaseId", "appVersion", "createdAt", "frozenAt", "active", "participantHmacKeyFingerprint", "prolificCompletionCodeFingerprint", "prolificCompletionAction", "expectedHashes", "approvals", "studies"], "Release config");
-assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-2", "Unsupported release config schema");
+assertExactKeys(config, [
+  "schemaVersion", "releaseId", "appVersion", "createdAt", "frozenAt", "active",
+  "randomizationSeedFingerprint", "randomizationAlgorithm", "optionLayoutAlgorithm",
+  "participantHmacKeyFingerprint", "prolificCompletionCodeFingerprint",
+  "prolificCompletionAction", "expectedHashes", "approvals", "studies"
+], "Release config");
+assert(config.schemaVersion === "uvlt-fixed-ab-field-release-config-3", "Unsupported release config schema");
 assertBoundedString(config.releaseId, "releaseId", { min: 8, max: 128, pattern: /^[a-z0-9][a-z0-9._-]+$/ });
 assertBoundedString(config.appVersion, "appVersion", { min: 8, max: 128, pattern: /^[A-Za-z0-9][A-Za-z0-9._-]+$/ });
 assertPlainObject(packageMetadata, "package.json");
@@ -153,6 +163,9 @@ if (config.frozenAt !== null) {
 }
 assert(typeof config.active === "boolean", "active must be boolean");
 assert(!requireActive || config.active, "Deployment seed generation requires an active release config");
+assert(config.randomizationSeedFingerprint === null || /^sha256:[0-9a-f]{64}$/.test(config.randomizationSeedFingerprint), "randomizationSeedFingerprint must be null or sha256:<64 lowercase hex>");
+assert(config.randomizationAlgorithm === null || config.randomizationAlgorithm === RANDOMIZATION_ALGORITHM, `randomizationAlgorithm must be null or ${RANDOMIZATION_ALGORITHM}`);
+assert(config.optionLayoutAlgorithm === null || config.optionLayoutAlgorithm === OPTION_LAYOUT_ALGORITHM, `optionLayoutAlgorithm must be null or ${OPTION_LAYOUT_ALGORITHM}`);
 assert(config.participantHmacKeyFingerprint === null || /^sha256:[0-9a-f]{64}$/.test(config.participantHmacKeyFingerprint), "participantHmacKeyFingerprint must be null or sha256:<64 lowercase hex>");
 assert(config.prolificCompletionCodeFingerprint === null || /^sha256:[0-9a-f]{64}$/.test(config.prolificCompletionCodeFingerprint), "prolificCompletionCodeFingerprint must be null or sha256:<64 lowercase hex>");
 assert(config.prolificCompletionAction === null || ["MANUALLY_REVIEW", "AUTOMATICALLY_APPROVE"].includes(config.prolificCompletionAction), "prolificCompletionAction must be null, MANUALLY_REVIEW, or AUTOMATICALLY_APPROVE");
@@ -162,21 +175,21 @@ assert(routes.schemaVersion === "uvlt-fixed-ab-routes-snapshot-1.0", "Unsupporte
 assertPlainObject(manifest.integrity, "Runtime manifest integrity");
 assertPlainObject(bank.integrity, "Bank integrity");
 assertPlainObject(routes.integrity, "Routes integrity");
-assert(payloadHash(manifest) === manifest.integrity.payloadSha256, "Runtime manifest payload hash is invalid");
-assert(payloadHash(bank) === bank.integrity.payloadSha256, "Bank payload hash is invalid");
-assert(payloadHash(routes) === routes.integrity.payloadSha256, "Routes payload hash is invalid");
+assert(payloadSha256(manifest) === manifest.integrity.payloadSha256, "Runtime manifest payload hash is invalid");
+assert(payloadSha256(bank) === bank.integrity.payloadSha256, "Bank payload hash is invalid");
+assert(payloadSha256(routes) === routes.integrity.payloadSha256, "Routes payload hash is invalid");
 assertExactKeys(publicBuildManifest, ["schemaVersion", "appVersion", "files"], "Public build manifest");
 assert(publicBuildManifest.schemaVersion === "uvlt-field-public-build-2", "Unsupported public build manifest schema");
 assert(publicBuildManifest.appVersion === packageMetadata.version, "Public build manifest appVersion must exactly match package.json version");
 assert(Array.isArray(publicBuildManifest.files), "Public build manifest files must be an array");
-assertExactKeys(config.expectedHashes, ["runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256", "publicBuildManifestSha256"], "expectedHashes");
+assertExactKeys(config.expectedHashes, ["runtimeManifestPayloadSha256", "bankPayloadSha256", "routesPayloadSha256", "allocationScheduleSha256", "publicBuildManifestSha256"], "expectedHashes");
 for (const [field, value] of Object.entries(config.expectedHashes)) {
   assert(/^[0-9a-f]{64}$/.test(value || ""), `expectedHashes.${field} must be a lowercase SHA-256 value`);
 }
 assert(config.expectedHashes.runtimeManifestPayloadSha256 === manifest.integrity.payloadSha256, "Release config does not pin this runtime manifest");
 assert(config.expectedHashes.bankPayloadSha256 === bank.integrity.payloadSha256, "Release config does not pin this bank");
 assert(config.expectedHashes.routesPayloadSha256 === routes.integrity.payloadSha256, "Release config does not pin this route set");
-assert(config.expectedHashes.publicBuildManifestSha256 === sha256(publicBuildManifestRawBytes), "Release config does not pin this public build manifest");
+assert(config.expectedHashes.publicBuildManifestSha256 === sha256Hex(publicBuildManifestRawBytes), "Release config does not pin this public build manifest");
 assert(Array.isArray(manifest.artifacts), "Runtime manifest artifacts must be an array");
 const manifestArtifacts = new Map();
 for (const [index, artifact] of manifest.artifacts.entries()) {
@@ -194,7 +207,7 @@ for (const [role, artifact, expectedFileName, source, rawBytes] of [
   assert(artifact.schemaVersion === source.schemaVersion, `Runtime manifest ${role} schema does not match its artifact`);
   assert(artifact.payloadSha256 === source.integrity.payloadSha256, `Runtime manifest ${role} payload hash does not match its artifact`);
   assert(artifact.contentSha256 === source.integrity.contentSha256, `Runtime manifest ${role} content hash does not match its artifact`);
-  assert(artifact.rawFileSha256 === sha256(rawBytes), `Runtime manifest ${role} raw file hash does not match its artifact`);
+  assert(artifact.rawFileSha256 === sha256Hex(rawBytes), `Runtime manifest ${role} raw file hash does not match its artifact`);
   assert(artifact.containsCanonicalAnswerKey === false, `Runtime manifest ${role} must declare that it contains no canonical answer key`);
 }
 assertPlainObject(routes.sourceBank, "Routes sourceBank");
@@ -214,6 +227,9 @@ const requiredApprovals = [
   "ethicsApprovalRecorded",
   "privacyRetentionDeletionPlanRecorded",
   "protectedDataReceiptVerified",
+  "privateWorkspaceApprovalRecorded",
+  "randomizationScheduleReviewRecorded",
+  "attritionReplacementPolicyRecorded",
   "independentPrelaunchReviewCompleted"
 ];
 assertExactKeys(approvals, requiredApprovals, "approvals");
@@ -234,8 +250,15 @@ for (const [index, study] of studies.entries()) {
 if (config.active) {
   assert(requiredApprovals.every(field => approvals[field] === true), "An active release requires every approval gate to be true");
   assert(config.frozenAt !== null, "An active release requires frozenAt");
+  assert(allocationSchedule !== null, "An active release requires a private allocation schedule");
+  assert(/^sha256:[0-9a-f]{64}$/.test(config.randomizationSeedFingerprint || ""), "An active release requires randomizationSeedFingerprint");
+  assert(config.randomizationSeedFingerprint !== `sha256:${ZERO_SHA256}`, "An active release cannot use the zero randomizationSeedFingerprint placeholder");
+  assert(config.randomizationAlgorithm === RANDOMIZATION_ALGORITHM, "An active release requires the supported randomizationAlgorithm");
+  assert(config.optionLayoutAlgorithm === OPTION_LAYOUT_ALGORITHM, "An active release requires the supported optionLayoutAlgorithm");
   assert(/^sha256:[0-9a-f]{64}$/.test(config.participantHmacKeyFingerprint || ""), "An active release requires participantHmacKeyFingerprint");
+  assert(config.participantHmacKeyFingerprint !== `sha256:${ZERO_SHA256}`, "An active release cannot use the zero participantHmacKeyFingerprint placeholder");
   assert(/^sha256:[0-9a-f]{64}$/.test(config.prolificCompletionCodeFingerprint || ""), "An active release requires prolificCompletionCodeFingerprint");
+  assert(config.prolificCompletionCodeFingerprint !== `sha256:${ZERO_SHA256}`, "An active release cannot use the zero prolificCompletionCodeFingerprint placeholder");
   assert(["MANUALLY_REVIEW", "AUTOMATICALLY_APPROVE"].includes(config.prolificCompletionAction), "An active release requires prolificCompletionAction");
   assert(studies.length === 2, "An active release requires exactly two Prolific studies");
   assert(new Set(studies.map(study => study.l1)).size === 2, "Active studies must contain one ja and one vi stratum");
@@ -293,7 +316,7 @@ for (const [index, source] of bank.testlets.entries()) {
     ...payload,
     formId: source.formId,
     band: source.band,
-    contentSha256: sha256(stableStringify(payload))
+    contentSha256: sha256Hex(stableStringify(payload))
   });
   const moduleMembers = moduleTestletIds.get(source.moduleId) || [];
   moduleMembers.push(source.testletId);
@@ -347,17 +370,54 @@ for (const [routeIndex, route] of routes.routes.entries()) {
 }
 assert(new Set(routes.routes.map(route => route.routeId)).size === 10, "Route IDs must be unique");
 
+validateWilliamsRouteBalance(routes);
+
+const allocationRows = [];
+if (allocationSchedule === null) {
+  assert(config.active === false, "An active release cannot omit its allocation schedule");
+  assert(config.expectedHashes.allocationScheduleSha256 === ZERO_SHA256, "An inactive release without a schedule must use the zero allocationScheduleSha256 placeholder");
+  assert(config.randomizationSeedFingerprint === null, "An inactive release without a schedule must not set randomizationSeedFingerprint");
+  assert(config.randomizationAlgorithm === null, "An inactive release without a schedule must not set randomizationAlgorithm");
+  assert(config.optionLayoutAlgorithm === null, "An inactive release without a schedule must not set optionLayoutAlgorithm");
+} else {
+  inspectForbiddenFields(allocationSchedule, "allocationSchedule");
+  validateAllocationSchedule(allocationSchedule, {
+    releaseId: config.releaseId,
+    routesPayloadSha256: routes.integrity.payloadSha256
+  });
+  assert(allocationSchedule.releaseId === config.releaseId, "Allocation schedule releaseId must exactly match the release config");
+  assert(allocationSchedule.routesPayloadSha256 === routes.integrity.payloadSha256, "Allocation schedule must pin this Williams route artifact");
+  assert(allocationSchedule.integrity?.payloadSha256 === config.expectedHashes.allocationScheduleSha256, "Release config does not pin this allocation schedule");
+  assert(allocationSchedule.algorithm === RANDOMIZATION_ALGORITHM, "Allocation schedule randomization algorithm is unsupported");
+  assert(allocationSchedule.optionLayoutAlgorithm === OPTION_LAYOUT_ALGORITHM, "Allocation schedule option-layout algorithm is unsupported");
+  assert(config.randomizationSeedFingerprint === allocationSchedule.seedFingerprint, "Release config randomizationSeedFingerprint does not match the allocation schedule");
+  assert(config.randomizationAlgorithm === allocationSchedule.algorithm, "Release config randomizationAlgorithm does not match the allocation schedule");
+  assert(config.optionLayoutAlgorithm === allocationSchedule.optionLayoutAlgorithm, "Release config optionLayoutAlgorithm does not match the allocation schedule");
+  for (const slot of allocationSchedule.slots) {
+    allocationRows.push({
+      l1: slot.l1,
+      allocationIndex: slot.slotIndex,
+      randomizationBlock: slot.blockIndex,
+      blockPosition: slot.positionWithinBlock + 1,
+      routeId: slot.routeId,
+      optionLayoutId: slot.optionLayoutIndex
+    });
+  }
+  assert(allocationRows.length === 600, "Allocation schedule must produce exactly 600 D1 slots");
+}
+
 const lines = [
   "PRAGMA foreign_keys = ON;",
-  "BEGIN TRANSACTION;",
   "",
   "INSERT INTO runtime_releases (",
-  "  release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256, participant_hmac_key_fingerprint,",
+  "  release_id, app_version, public_build_manifest_sha256, runtime_manifest_sha256, bank_sha256, routes_sha256,",
+  "  allocation_schedule_sha256, randomization_seed_fingerprint, randomization_algorithm, option_layout_algorithm, participant_hmac_key_fingerprint,",
   "  prolific_completion_code_fingerprint, prolific_completion_action,",
   "  expected_testlets, expected_items, expected_breaks, active, created_at, frozen_at",
   ") VALUES (",
   `  ${sql(config.releaseId)}, ${sql(config.appVersion)}, ${sql(config.expectedHashes.publicBuildManifestSha256)}, ${sql(manifest.integrity.payloadSha256)},`,
-  `  ${sql(bank.integrity.payloadSha256)}, ${sql(routes.integrity.payloadSha256)}, ${sql(config.participantHmacKeyFingerprint)},`,
+  `  ${sql(bank.integrity.payloadSha256)}, ${sql(routes.integrity.payloadSha256)}, ${sql(allocationSchedule?.integrity.payloadSha256)},`,
+  `  ${sql(config.randomizationSeedFingerprint)}, ${sql(config.randomizationAlgorithm)}, ${sql(config.optionLayoutAlgorithm)}, ${sql(config.participantHmacKeyFingerprint)},`,
   `  ${sql(config.prolificCompletionCodeFingerprint)}, ${sql(config.prolificCompletionAction)},`,
   `  100, 300, 9, 0, ${sql(config.createdAt)}, ${sql(config.frozenAt)}`,
   ");",
@@ -388,6 +448,14 @@ for (const row of routeRows) {
   );
 }
 
+if (allocationRows.length) lines.push("");
+for (const row of allocationRows) {
+  lines.push(
+    "INSERT INTO runtime_allocation_slots (release_id, l1, allocation_index, randomization_block, block_position, route_id, option_layout_id) VALUES (" +
+      `${sql(config.releaseId)}, ${sql(row.l1)}, ${row.allocationIndex}, ${row.randomizationBlock}, ${row.blockPosition}, ${sql(row.routeId)}, ${row.optionLayoutId});`
+  );
+}
+
 if (config.active) {
   lines.push("");
   for (const study of studies) {
@@ -400,16 +468,44 @@ if (config.active) {
   );
 }
 
-lines.push("", "COMMIT;", "");
-await mkdir(path.dirname(outputPath), { recursive: true });
-const temporaryOutputPath = `${outputPath}.tmp-${process.pid}`;
-await writeFile(temporaryOutputPath, lines.join("\n"), { encoding: "utf8", mode: 0o600 });
-await rename(temporaryOutputPath, outputPath);
-await chmod(outputPath, 0o600);
+lines.push("");
+const seedBytes = Buffer.from(lines.join("\n"), "utf8");
+await mkdir(path.dirname(outputPath), { recursive: true, mode: 0o700 });
+await chmod(privateDirectory, 0o700);
+await chmod(path.dirname(outputPath), 0o700);
+let seedWrite;
+try {
+  const existing = await readFile(outputPath);
+  assert(existing.equals(seedBytes), `${path.relative(project, outputPath)} is frozen and differs from the generated bytes`);
+  await chmod(outputPath, 0o600);
+  seedWrite = "unchanged";
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+  const temporaryOutputPath = path.join(
+    path.dirname(outputPath),
+    `.${path.basename(outputPath)}.tmp-${process.pid}-${Date.now()}`
+  );
+  try {
+    await writeFile(temporaryOutputPath, seedBytes, { flag: "wx", mode: 0o600 });
+    try {
+      await link(temporaryOutputPath, outputPath);
+      seedWrite = "created";
+    } catch (publicationError) {
+      if (publicationError?.code !== "EEXIST") throw publicationError;
+      const existing = await readFile(outputPath);
+      assert(existing.equals(seedBytes), `${path.relative(project, outputPath)} was concurrently frozen with different bytes`);
+      seedWrite = "unchanged";
+    }
+    await chmod(outputPath, 0o600);
+  } finally {
+    await unlink(temporaryOutputPath).catch(() => {});
+  }
+}
 
 console.log(JSON.stringify({
   ok: true,
   output: path.relative(project, outputPath),
+  seedWrite,
   releaseId: config.releaseId,
   appVersion: config.appVersion,
   publicBuildManifestSha256: config.expectedHashes.publicBuildManifestSha256,
@@ -417,9 +513,14 @@ console.log(JSON.stringify({
   participantHmacKeyFingerprintConfigured: config.participantHmacKeyFingerprint !== null,
   prolificCompletionCodeFingerprintConfigured: config.prolificCompletionCodeFingerprint !== null,
   prolificCompletionAction: config.prolificCompletionAction,
+  allocationScheduleSha256: allocationSchedule?.integrity.payloadSha256 ?? null,
+  randomizationSeedFingerprintConfigured: config.randomizationSeedFingerprint !== null,
+  randomizationAlgorithm: config.randomizationAlgorithm,
+  optionLayoutAlgorithm: config.optionLayoutAlgorithm,
   studies: studies.length,
   testlets: testlets.size,
   routeRows: routeRows.length,
+  allocationSlots: allocationRows.length,
   answerKeysIncluded: false,
   scoringFieldsIncluded: false
 }, null, 2));

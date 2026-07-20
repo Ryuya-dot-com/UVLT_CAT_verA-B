@@ -5,6 +5,13 @@ const TOTAL_TESTLETS = 100;
 const TOTAL_RESPONSES = 300;
 const TOTAL_BREAKS = 9;
 const ROUTE_COUNT = 10;
+const L1_COUNT = 2;
+const ALLOCATIONS_PER_L1 = 300;
+const RANDOMIZATION_BLOCK_SIZE = 10;
+const RANDOMIZATION_BLOCKS_PER_L1 = ALLOCATIONS_PER_L1 / RANDOMIZATION_BLOCK_SIZE;
+const OPTION_LAYOUT_COUNT = 6;
+const RANDOMIZATION_ALGORITHM = "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1";
+const OPTION_LAYOUT_ALGORITHM = "even-order-williams-square-6-canonical-first-v1";
 const PROLIFIC_ID_PATTERN = /^[0-9a-f]{24}$/i;
 const RELEASE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -14,6 +21,8 @@ const COMPLETION_CODE_PATTERN = /^[A-Za-z0-9]{4,32}$/;
 const APP_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const SHA256_FINGERPRINT_PATTERN = /^sha256:[0-9a-f]{64}$/;
+const ZERO_SHA256 = "0".repeat(64);
+const ZERO_SHA256_FINGERPRINT = `sha256:${ZERO_SHA256}`;
 const ISO_UTC_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const ISO_DATE_MAX_BYTES = 40;
 const PUBLIC_BUILD_MANIFEST_MAX_BYTES = 32 * 1024;
@@ -70,7 +79,10 @@ interface SessionRow {
   participant_link_hmac: string;
   submission_link_hmac: string;
   allocation_index: number;
+  randomization_block: number;
+  block_position: number;
   route_id: string;
+  option_layout_id: number;
   status: "in_progress" | "completed";
   next_testlet_ordinal: number;
   completed_testlets: number;
@@ -79,10 +91,7 @@ interface SessionRow {
   completed_at: string | null;
 }
 
-interface RuntimeTestletRow {
-  testlet_ordinal: number;
-  module_position: number;
-  testlet_position_within_module: number;
+interface RuntimeTestletContentRow {
   testlet_id: string;
   module_id: string;
   options_json: string;
@@ -90,16 +99,36 @@ interface RuntimeTestletRow {
   content_sha256: string;
 }
 
-interface PublicRuntimeItem {
+interface RuntimeTestletRow extends RuntimeTestletContentRow {
+  testlet_ordinal: number;
+  module_position: number;
+  testlet_position_within_module: number;
+}
+
+interface RuntimeRouteRow {
+  route_id: string;
+  testlet_ordinal: number;
+  module_position: number;
+  testlet_position_within_module: number;
+  testlet_id: string;
+}
+
+interface ValidatedRuntimeItem {
   itemId: string;
   prompt: string;
   itemPositionWithinTestlet: number;
 }
 
-interface PublicRuntimeTestlet {
+interface ValidatedRuntimeTestlet {
   testletId: string;
+  moduleId: string;
   options: string[];
-  items: PublicRuntimeItem[];
+  items: ValidatedRuntimeItem[];
+}
+
+interface PublicRuntimeTestlet {
+  options: string[];
+  items: Array<{ prompt: string }>;
 }
 
 interface TestletSubmissionBody {
@@ -113,6 +142,7 @@ interface TestletSubmissionBody {
 
 interface ExistingSubmissionRow {
   testlet_ordinal: number;
+  option_layout_id: number;
   idempotency_key: string;
   payload_sha256: string;
 }
@@ -122,6 +152,7 @@ interface CompletionCountsRow {
   response_count: number;
   break_count: number;
   invalid_route_submission_count: number;
+  invalid_option_layout_submission_count: number;
 }
 
 interface ReleaseReadinessRow {
@@ -130,6 +161,10 @@ interface ReleaseReadinessRow {
   runtime_manifest_sha256: string;
   bank_sha256: string;
   routes_sha256: string;
+  allocation_schedule_sha256: string;
+  randomization_seed_fingerprint: string | null;
+  randomization_algorithm: string | null;
+  option_layout_algorithm: string | null;
   participant_hmac_key_fingerprint: string | null;
   prolific_completion_code_fingerprint: string | null;
   prolific_completion_action: ProlificCompletionAction | null;
@@ -138,9 +173,6 @@ interface ReleaseReadinessRow {
   expected_testlets: number;
   expected_items: number;
   expected_breaks: number;
-  testlet_count: number;
-  route_row_count: number;
-  route_count: number;
   active_study_count: number;
   active_l1_count: number;
 }
@@ -152,6 +184,7 @@ interface ExpectedReleaseIdentity {
   runtimeManifestSha256: string;
   bankSha256: string;
   routesSha256: string;
+  allocationScheduleSha256: string;
   participantHmacKeyFingerprint: string;
   prolificCompletionCodeFingerprint: string;
   prolificCompletionAction: ProlificCompletionAction;
@@ -161,6 +194,23 @@ interface PublicBuildIdentity {
   appVersion: string;
   rawSha256: string;
 }
+
+interface AllocationSlotRow {
+  l1: "ja" | "vi";
+  allocation_index: number;
+  randomization_block: number;
+  block_position: number;
+  route_id: string;
+  option_layout_id: number;
+}
+
+// Only successful full verification of immutable runtime content, routes, and
+// allocation artifacts is cached. The key contains the complete release/deploy
+// identity; values are identity strings only, never rows or participant data.
+// Release/study, secret, public-build, and Worker-tag checks still run on every
+// request. Active-release triggers make the verified runtime tables immutable.
+const VERIFIED_RUNTIME_CACHE_LIMIT = 4;
+const verifiedRuntimeKeys = new Set<string>();
 
 class PublicHttpError extends Error {
   readonly status: number;
@@ -216,6 +266,31 @@ function bytesToHex(bytes: ArrayBuffer): string {
 export async function sha256Hex(value: string): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
   return bytesToHex(digest);
+}
+
+// The ordinary six-condition Williams first row is [0, 1, 5, 2, 4, 3].
+// Relabeling the source values by its inverse makes layout 0 canonical while
+// retaining exact position and directed-adjacency balance across all six rows.
+const OPTION_LAYOUT_SOURCE_LABELS = Object.freeze([0, 1, 3, 5, 4, 2]);
+const OPTION_LAYOUT_FIRST_ROW_INDEXES = Object.freeze([0, 1, 5, 2, 4, 3]);
+const OPTION_LAYOUT_PERMUTATIONS: readonly (readonly number[])[] = Object.freeze(
+  Array.from({ length: OPTION_LAYOUT_COUNT }, (_value, layoutId) => Object.freeze(
+    OPTION_LAYOUT_FIRST_ROW_INDEXES.map(
+      (sourceIndex) => OPTION_LAYOUT_SOURCE_LABELS[(sourceIndex + layoutId) % OPTION_LAYOUT_COUNT]
+    )
+  ))
+);
+
+export function optionPermutationForLayout(optionLayoutId: number): readonly number[] {
+  if (!Number.isInteger(optionLayoutId) || optionLayoutId < 0 || optionLayoutId >= OPTION_LAYOUT_COUNT) {
+    throw new Error("Invalid option layout ID");
+  }
+  return OPTION_LAYOUT_PERMUTATIONS[optionLayoutId];
+}
+
+function optionsForLayout(options: readonly string[], optionLayoutId: number): string[] {
+  if (options.length !== OPTION_LAYOUT_COUNT) throw new Error("Invalid canonical option count");
+  return optionPermutationForLayout(optionLayoutId).map((canonicalIndex) => options[canonicalIndex]);
 }
 
 async function sha256BytesHex(value: Uint8Array): Promise<string> {
@@ -436,6 +511,7 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
   const runtimeManifestSha256: string = env.EXPECTED_RUNTIME_MANIFEST_SHA256;
   const bankSha256: string = env.EXPECTED_BANK_SHA256;
   const routesSha256: string = env.EXPECTED_ROUTES_SHA256;
+  const allocationScheduleSha256: string = env.EXPECTED_ALLOCATION_SCHEDULE_SHA256;
   const participantHmacKeyFingerprint: string = env.EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT;
   const prolificCompletionCodeFingerprint: string = env.EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT;
   const prolificCompletionAction: string = env.EXPECTED_PROLIFIC_COMPLETION_ACTION;
@@ -443,10 +519,15 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
       !APP_VERSION_PATTERN.test(appVersion) || appVersion === "UNCONFIGURED" ||
       !SHA256_PATTERN.test(publicBuildManifestSha256) ||
       !SHA256_PATTERN.test(runtimeManifestSha256) || !SHA256_PATTERN.test(bankSha256) ||
-      !SHA256_PATTERN.test(routesSha256) || !SHA256_FINGERPRINT_PATTERN.test(participantHmacKeyFingerprint)) {
+      !SHA256_PATTERN.test(routesSha256) || !SHA256_PATTERN.test(allocationScheduleSha256) ||
+      [publicBuildManifestSha256, runtimeManifestSha256, bankSha256, routesSha256,
+        allocationScheduleSha256].some((value) => value === ZERO_SHA256) ||
+      !SHA256_FINGERPRINT_PATTERN.test(participantHmacKeyFingerprint) ||
+      participantHmacKeyFingerprint === ZERO_SHA256_FINGERPRINT) {
     return null;
   }
   if (!SHA256_FINGERPRINT_PATTERN.test(prolificCompletionCodeFingerprint) ||
+      prolificCompletionCodeFingerprint === ZERO_SHA256_FINGERPRINT ||
       !["MANUALLY_REVIEW", "AUTOMATICALLY_APPROVE"].includes(prolificCompletionAction)) {
     return null;
   }
@@ -457,6 +538,7 @@ function expectedReleaseIdentity(env: Env): ExpectedReleaseIdentity | null {
     runtimeManifestSha256,
     bankSha256,
     routesSha256,
+    allocationScheduleSha256,
     participantHmacKeyFingerprint,
     prolificCompletionCodeFingerprint,
     prolificCompletionAction: prolificCompletionAction as ProlificCompletionAction
@@ -526,6 +608,10 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
       r.runtime_manifest_sha256,
       r.bank_sha256,
       r.routes_sha256,
+      r.allocation_schedule_sha256,
+      r.randomization_seed_fingerprint,
+      r.randomization_algorithm,
+      r.option_layout_algorithm,
       r.participant_hmac_key_fingerprint,
       r.prolific_completion_code_fingerprint,
       r.prolific_completion_action,
@@ -534,9 +620,6 @@ async function releaseReadiness(env: Env): Promise<ReleaseReadinessRow | null> {
       r.expected_testlets,
       r.expected_items,
       r.expected_breaks,
-      (SELECT COUNT(*) FROM runtime_testlets t WHERE t.release_id = r.release_id) AS testlet_count,
-      (SELECT COUNT(*) FROM runtime_route_testlets rt WHERE rt.release_id = r.release_id) AS route_row_count,
-      (SELECT COUNT(DISTINCT route_id) FROM runtime_route_testlets rt WHERE rt.release_id = r.release_id) AS route_count,
       (SELECT COUNT(*) FROM studies s WHERE s.release_id = r.release_id AND s.active = 1) AS active_study_count,
       (SELECT COUNT(DISTINCT l1) FROM studies s WHERE s.release_id = r.release_id AND s.active = 1) AS active_l1_count
     FROM runtime_releases r
@@ -558,6 +641,11 @@ function readinessIsComplete(
     row.runtime_manifest_sha256 === expectedIdentity.runtimeManifestSha256 &&
     row.bank_sha256 === expectedIdentity.bankSha256 &&
     row.routes_sha256 === expectedIdentity.routesSha256 &&
+    row.allocation_schedule_sha256 === expectedIdentity.allocationScheduleSha256 &&
+    SHA256_FINGERPRINT_PATTERN.test(row.randomization_seed_fingerprint ?? "") &&
+    row.randomization_seed_fingerprint !== ZERO_SHA256_FINGERPRINT &&
+    row.randomization_algorithm === RANDOMIZATION_ALGORITHM &&
+    row.option_layout_algorithm === OPTION_LAYOUT_ALGORITHM &&
     row.participant_hmac_key_fingerprint === expectedIdentity.participantHmacKeyFingerprint &&
     row.prolific_completion_code_fingerprint === expectedIdentity.prolificCompletionCodeFingerprint &&
     row.prolific_completion_action === expectedIdentity.prolificCompletionAction &&
@@ -567,8 +655,252 @@ function readinessIsComplete(
     publicBuild.rawSha256 === expectedIdentity.publicBuildManifestSha256 &&
     workerVersionTag === expectedIdentity.releaseId &&
     row.expected_testlets === TOTAL_TESTLETS && row.expected_items === TOTAL_RESPONSES && row.expected_breaks === TOTAL_BREAKS &&
-    row.testlet_count === TOTAL_TESTLETS && row.route_row_count === TOTAL_TESTLETS * ROUTE_COUNT &&
-    row.route_count === ROUTE_COUNT && row.active_study_count === 2 && row.active_l1_count === 2;
+    row.active_study_count === L1_COUNT && row.active_l1_count === L1_COUNT;
+}
+
+function incrementCount(counts: Map<string, number>, key: string): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+function exactCountMap(counts: Map<string, number>, cells: number, repetitions: number): boolean {
+  return counts.size === cells && [...counts.values()].every((count) => count === repetitions);
+}
+
+async function runtimeContentAndRoutesMatch(env: Env, releaseId: string): Promise<boolean> {
+  const [testletResult, routeResult] = await Promise.all([
+    env.DB.prepare(`
+      SELECT testlet_id, module_id, options_json, items_json, content_sha256
+      FROM runtime_testlets
+      WHERE release_id = ?
+      ORDER BY testlet_id
+    `).bind(releaseId).all<RuntimeTestletContentRow>(),
+    env.DB.prepare(`
+      SELECT route_id, testlet_ordinal, module_position, testlet_position_within_module, testlet_id
+      FROM runtime_route_testlets
+      WHERE release_id = ?
+      ORDER BY route_id, testlet_ordinal
+    `).bind(releaseId).all<RuntimeRouteRow>()
+  ]);
+  if (testletResult.results.length !== TOTAL_TESTLETS ||
+      routeResult.results.length !== TOTAL_TESTLETS * ROUTE_COUNT) {
+    return false;
+  }
+
+  let testlets: ValidatedRuntimeTestlet[];
+  try {
+    testlets = await Promise.all(testletResult.results.map(validatedCanonicalTestletFromRow));
+  } catch {
+    return false;
+  }
+  const moduleByTestlet = new Map<string, string>();
+  const testletsByModule = new Map<string, Set<string>>();
+  for (const testlet of testlets) {
+    if (moduleByTestlet.has(testlet.testletId)) return false;
+    moduleByTestlet.set(testlet.testletId, testlet.moduleId);
+    const members = testletsByModule.get(testlet.moduleId) ?? new Set<string>();
+    members.add(testlet.testletId);
+    testletsByModule.set(testlet.moduleId, members);
+  }
+  if (testletsByModule.size !== ROUTE_COUNT ||
+      [...testletsByModule.values()].some((members) => members.size !== TOTAL_TESTLETS / ROUTE_COUNT)) {
+    return false;
+  }
+
+  const allTestletIds = new Set(moduleByTestlet.keys());
+  const allModuleIds = new Set(testletsByModule.keys());
+  const modulePositions = new Map<string, number>();
+  const moduleCarryovers = new Map<string, number>();
+  const withinModulePositions = new Map<string, number>();
+  const withinModuleCarryovers = new Map<string, number>();
+
+  for (let routeIndex = 0; routeIndex < ROUTE_COUNT; routeIndex += 1) {
+    const routeId = `R${String(routeIndex + 1).padStart(2, "0")}`;
+    const routeRows = routeResult.results.slice(routeIndex * TOTAL_TESTLETS, (routeIndex + 1) * TOTAL_TESTLETS);
+    const routeTestletIds = new Set<string>();
+    const moduleOrder: string[] = [];
+    for (let ordinal = 0; ordinal < TOTAL_TESTLETS; ordinal += 1) {
+      const routeRow = routeRows[ordinal];
+      const modulePosition = Math.floor(ordinal / (TOTAL_TESTLETS / ROUTE_COUNT)) + 1;
+      const withinModulePosition = ordinal % (TOTAL_TESTLETS / ROUTE_COUNT) + 1;
+      const moduleId = moduleByTestlet.get(routeRow.testlet_id);
+      if (routeRow.route_id !== routeId || routeRow.testlet_ordinal !== ordinal ||
+          routeRow.module_position !== modulePosition ||
+          routeRow.testlet_position_within_module !== withinModulePosition ||
+          moduleId === undefined || routeTestletIds.has(routeRow.testlet_id)) {
+        return false;
+      }
+      routeTestletIds.add(routeRow.testlet_id);
+      incrementCount(withinModulePositions, `${routeRow.testlet_id}|${withinModulePosition}`);
+      if (withinModulePosition === 1) {
+        moduleOrder.push(moduleId);
+        incrementCount(modulePositions, `${moduleId}|${modulePosition}`);
+      } else {
+        const previous = routeRows[ordinal - 1];
+        const previousModuleId = moduleByTestlet.get(previous.testlet_id);
+        if (previousModuleId !== moduleId) return false;
+        incrementCount(withinModuleCarryovers, `${previous.testlet_id}|${routeRow.testlet_id}`);
+      }
+    }
+    if (routeTestletIds.size !== TOTAL_TESTLETS ||
+        [...allTestletIds].some((testletId) => !routeTestletIds.has(testletId)) ||
+        new Set(moduleOrder).size !== ROUTE_COUNT ||
+        [...allModuleIds].some((moduleId) => !moduleOrder.includes(moduleId))) {
+      return false;
+    }
+    for (let modulePosition = 0; modulePosition + 1 < moduleOrder.length; modulePosition += 1) {
+      incrementCount(moduleCarryovers, `${moduleOrder[modulePosition]}|${moduleOrder[modulePosition + 1]}`);
+    }
+  }
+
+  return exactCountMap(modulePositions, ROUTE_COUNT * ROUTE_COUNT, 1) &&
+    exactCountMap(moduleCarryovers, ROUTE_COUNT * (ROUTE_COUNT - 1), 1) &&
+    exactCountMap(withinModulePositions, TOTAL_TESTLETS * (TOTAL_TESTLETS / ROUTE_COUNT), 1) &&
+    exactCountMap(
+      withinModuleCarryovers,
+      ROUTE_COUNT * (TOTAL_TESTLETS / ROUTE_COUNT) * (TOTAL_TESTLETS / ROUTE_COUNT - 1),
+      1
+    );
+}
+
+async function allocationScheduleRowsMatch(
+  env: Env,
+  row: ReleaseReadinessRow,
+  expectedIdentity: ExpectedReleaseIdentity
+): Promise<boolean> {
+  const result = await env.DB.prepare(`
+    SELECT
+      l1, allocation_index, randomization_block, block_position, route_id, option_layout_id
+    FROM runtime_allocation_slots
+    WHERE release_id = ?
+    ORDER BY CASE l1 WHEN 'ja' THEN 0 WHEN 'vi' THEN 1 ELSE 2 END, allocation_index
+  `).bind(expectedIdentity.releaseId).all<AllocationSlotRow>();
+  if (result.results.length !== L1_COUNT * ALLOCATIONS_PER_L1 ||
+      !SHA256_FINGERPRINT_PATTERN.test(row.randomization_seed_fingerprint ?? "")) {
+    return false;
+  }
+
+  const slots: JsonObject[] = [];
+  const blockRoutes = new Map<string, number>();
+  const blockLayouts = new Map<string, number>();
+  const routesByL1 = new Map<string, number>();
+  const layoutsByL1 = new Map<string, number>();
+  const routeLayoutsByL1 = new Map<string, number>();
+  const macroRouteLayouts = new Map<string, number>();
+  for (let index = 0; index < result.results.length; index += 1) {
+    const slot = result.results[index];
+    const expectedL1: "ja" | "vi" = index < ALLOCATIONS_PER_L1 ? "ja" : "vi";
+    const localIndex = index % ALLOCATIONS_PER_L1;
+    const expectedBlock = Math.floor(localIndex / RANDOMIZATION_BLOCK_SIZE);
+    const expectedPosition = localIndex % RANDOMIZATION_BLOCK_SIZE;
+    if (slot.l1 !== expectedL1 || slot.allocation_index !== localIndex ||
+        slot.randomization_block !== expectedBlock || slot.block_position !== expectedPosition + 1 ||
+        !/^R(?:0[1-9]|10)$/.test(slot.route_id) || !Number.isInteger(slot.option_layout_id) ||
+        slot.option_layout_id < 0 || slot.option_layout_id >= OPTION_LAYOUT_COUNT) {
+      return false;
+    }
+    const macroreplicate = Math.floor(slot.randomization_block / OPTION_LAYOUT_COUNT);
+    incrementCount(blockRoutes, `${slot.l1}|${slot.randomization_block}|${slot.route_id}`);
+    incrementCount(blockLayouts, `${slot.l1}|${slot.randomization_block}|${slot.option_layout_id}`);
+    incrementCount(routesByL1, `${slot.l1}|${slot.route_id}`);
+    incrementCount(layoutsByL1, `${slot.l1}|${slot.option_layout_id}`);
+    incrementCount(routeLayoutsByL1, `${slot.l1}|${slot.route_id}|${slot.option_layout_id}`);
+    incrementCount(macroRouteLayouts, `${slot.l1}|${macroreplicate}|${slot.route_id}|${slot.option_layout_id}`);
+    slots.push({
+      l1: slot.l1,
+      slotIndex: slot.allocation_index,
+      blockIndex: slot.randomization_block,
+      positionWithinBlock: slot.block_position - 1,
+      macroreplicateIndex: Math.floor(slot.randomization_block / OPTION_LAYOUT_COUNT),
+      blockWithinMacroreplicate: slot.randomization_block % OPTION_LAYOUT_COUNT,
+      routeId: slot.route_id,
+      optionLayoutIndex: slot.option_layout_id
+    });
+  }
+  if (!exactCountMap(blockRoutes, L1_COUNT * RANDOMIZATION_BLOCKS_PER_L1 * ROUTE_COUNT, 1) ||
+      blockLayouts.size !== L1_COUNT * RANDOMIZATION_BLOCKS_PER_L1 * OPTION_LAYOUT_COUNT ||
+      [...blockLayouts.values()].some((count) => count !== 1 && count !== 2) ||
+      !exactCountMap(routesByL1, L1_COUNT * ROUTE_COUNT, RANDOMIZATION_BLOCKS_PER_L1) ||
+      !exactCountMap(layoutsByL1, L1_COUNT * OPTION_LAYOUT_COUNT, ALLOCATIONS_PER_L1 / OPTION_LAYOUT_COUNT) ||
+      !exactCountMap(routeLayoutsByL1, L1_COUNT * ROUTE_COUNT * OPTION_LAYOUT_COUNT, 5) ||
+      !exactCountMap(macroRouteLayouts, L1_COUNT * 5 * ROUTE_COUNT * OPTION_LAYOUT_COUNT, 1)) {
+    return false;
+  }
+
+  const reconstructedSchedule = {
+    schemaVersion: "uvlt-fixed-ab-randomization-schedule-1",
+    releaseId: expectedIdentity.releaseId,
+    algorithm: RANDOMIZATION_ALGORITHM,
+    optionLayoutAlgorithm: OPTION_LAYOUT_ALGORITHM,
+    seedFingerprint: row.randomization_seed_fingerprint,
+    routesPayloadSha256: row.routes_sha256,
+    nominalSlotsPerL1: ALLOCATIONS_PER_L1,
+    blockSize: RANDOMIZATION_BLOCK_SIZE,
+    blocksPerL1: RANDOMIZATION_BLOCKS_PER_L1,
+    macroreplicatesPerL1: RANDOMIZATION_BLOCKS_PER_L1 / OPTION_LAYOUT_COUNT,
+    blocksPerMacroreplicate: OPTION_LAYOUT_COUNT,
+    optionLayouts: OPTION_LAYOUT_PERMUTATIONS.map((optionOrder, optionLayoutIndex) => ({
+      optionLayoutIndex,
+      optionOrder: [...optionOrder]
+    })),
+    slots,
+    // The artifact payload contract deletes only integrity.payloadSha256 and
+    // retains the now-empty integrity object before stable serialization.
+    integrity: {}
+  };
+  const reconstructedHash = await sha256Hex(stableJson(reconstructedSchedule));
+  if (reconstructedHash !== row.allocation_schedule_sha256 ||
+      reconstructedHash !== expectedIdentity.allocationScheduleSha256) {
+    return false;
+  }
+  return true;
+}
+
+function runtimeVerificationKey(
+  env: Env,
+  row: ReleaseReadinessRow,
+  expectedIdentity: ExpectedReleaseIdentity
+): string {
+  return stableJson({
+    schemaVersion: "uvlt-verified-runtime-cache-key-1",
+    workerVersionId: env.CF_VERSION_METADATA?.id ?? "",
+    releaseId: expectedIdentity.releaseId,
+    appVersion: expectedIdentity.appVersion,
+    publicBuildManifestSha256: expectedIdentity.publicBuildManifestSha256,
+    runtimeManifestSha256: expectedIdentity.runtimeManifestSha256,
+    bankSha256: expectedIdentity.bankSha256,
+    routesSha256: expectedIdentity.routesSha256,
+    allocationScheduleSha256: expectedIdentity.allocationScheduleSha256,
+    randomizationSeedFingerprint: row.randomization_seed_fingerprint,
+    participantHmacKeyFingerprint: expectedIdentity.participantHmacKeyFingerprint,
+    prolificCompletionCodeFingerprint: expectedIdentity.prolificCompletionCodeFingerprint,
+    randomizationAlgorithm: row.randomization_algorithm,
+    optionLayoutAlgorithm: row.option_layout_algorithm,
+    prolificCompletionAction: expectedIdentity.prolificCompletionAction
+  });
+}
+
+function rememberVerifiedRuntime(cacheKey: string): void {
+  if (verifiedRuntimeKeys.size >= VERIFIED_RUNTIME_CACHE_LIMIT) {
+    const oldest = verifiedRuntimeKeys.values().next().value;
+    if (typeof oldest === "string") verifiedRuntimeKeys.delete(oldest);
+  }
+  verifiedRuntimeKeys.add(cacheKey);
+}
+
+async function immutableRuntimeMatches(
+  env: Env,
+  row: ReleaseReadinessRow,
+  expectedIdentity: ExpectedReleaseIdentity
+): Promise<boolean> {
+  const cacheKey = runtimeVerificationKey(env, row, expectedIdentity);
+  if (verifiedRuntimeKeys.has(cacheKey)) return true;
+  const [contentAndRoutesMatch, allocationMatches] = await Promise.all([
+    runtimeContentAndRoutesMatch(env, expectedIdentity.releaseId),
+    allocationScheduleRowsMatch(env, row, expectedIdentity)
+  ]);
+  if (!contentAndRoutesMatch || !allocationMatches) return false;
+  rememberVerifiedRuntime(cacheKey);
+  return true;
 }
 
 async function assertReleaseReady(env: Env): Promise<void> {
@@ -590,7 +922,7 @@ async function assertReleaseReady(env: Env): Promise<void> {
     `sha256:${actualCompletionCodeHash}`,
     publicBuild,
     env.CF_VERSION_METADATA?.tag ?? null
-  )) {
+  ) || row === null || !(await immutableRuntimeMatches(env, row, expectedIdentity))) {
     httpError(503, "RELEASE_NOT_READY", "Data collection is not available.", true);
   }
 }
@@ -739,7 +1071,8 @@ async function existingLinkedSession(
   const found = await env.DB.prepare(`
     SELECT
       session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
-      allocation_index, route_id, status, next_testlet_ordinal, completed_testlets,
+      allocation_index, randomization_block, block_position, route_id, option_layout_id,
+      status, next_testlet_ordinal, completed_testlets,
       response_count, breaks_completed, completed_at
     FROM sessions
     WHERE submission_link_hmac = ? OR (study_id = ? AND participant_link_hmac = ?)
@@ -795,24 +1128,32 @@ const ALLOCATE_SESSION_SQL = `
     SELECT COALESCE(MAX(allocation_index) + 1, 0) AS allocation_index
     FROM sessions
     WHERE release_id = ? AND l1 = ?
+  ), assigned_slot AS (
+    SELECT
+      slot.allocation_index,
+      slot.randomization_block,
+      slot.block_position,
+      slot.route_id,
+      slot.option_layout_id
+    FROM next_allocation next
+    JOIN runtime_allocation_slots slot
+      ON slot.release_id = ? AND slot.l1 = ? AND slot.allocation_index = next.allocation_index
   )
   INSERT INTO sessions (
     session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
-    allocation_index, route_id, token_sha256, token_expires_at, status, next_testlet_ordinal,
+    allocation_index, randomization_block, block_position, route_id, option_layout_id,
+    token_sha256, token_expires_at, status, next_testlet_ordinal,
     completed_testlets, response_count, breaks_completed, created_at, updated_at
   )
   SELECT
-    ?, ?, ?, ?, ?, ?, allocation_index,
-    CASE (allocation_index % 10)
-      WHEN 0 THEN 'R01' WHEN 1 THEN 'R02' WHEN 2 THEN 'R03' WHEN 3 THEN 'R04' WHEN 4 THEN 'R05'
-      WHEN 5 THEN 'R06' WHEN 6 THEN 'R07' WHEN 7 THEN 'R08' WHEN 8 THEN 'R09' WHEN 9 THEN 'R10'
-    END,
+    ?, ?, ?, ?, ?, ?, allocation_index, randomization_block, block_position, route_id, option_layout_id,
     ?, ?, 'in_progress', 0, 0, 0, 0, ?, ?
-  FROM next_allocation
+  FROM assigned_slot
   WHERE allocation_index BETWEEN 0 AND 299
   RETURNING
     session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
-    allocation_index, route_id, status, next_testlet_ordinal, completed_testlets,
+    allocation_index, randomization_block, block_position, route_id, option_layout_id,
+    status, next_testlet_ordinal, completed_testlets,
     response_count, breaks_completed, completed_at
 `;
 
@@ -851,6 +1192,7 @@ async function createOrResumeSession(
       const results = await env.DB.batch([
         env.DB.prepare(ALLOCATE_SESSION_SQL).bind(
           study.release_id, study.l1,
+          study.release_id, study.l1,
           sessionId, study.release_id, study.study_id, study.l1, links.participant, links.submission,
           tokenHash, tokenExpiresAt, now, now
         ),
@@ -886,7 +1228,8 @@ async function authenticateSession(request: Request, env: Env): Promise<SessionR
   const session = await env.DB.prepare(`
     SELECT
       session_id, release_id, study_id, l1, participant_link_hmac, submission_link_hmac,
-      allocation_index, route_id, status, next_testlet_ordinal, completed_testlets,
+      allocation_index, randomization_block, block_position, route_id, option_layout_id,
+      status, next_testlet_ordinal, completed_testlets,
       response_count, breaks_completed, completed_at
     FROM sessions
     WHERE session_id = ? AND token_sha256 = ? AND release_id = ? AND token_expires_at > ?
@@ -898,6 +1241,13 @@ async function authenticateSession(request: Request, env: Env): Promise<SessionR
 function assertSessionCounters(session: SessionRow): void {
   if (!Number.isInteger(session.next_testlet_ordinal) || !Number.isInteger(session.completed_testlets) ||
       !Number.isInteger(session.response_count) || !Number.isInteger(session.breaks_completed) ||
+      !Number.isInteger(session.allocation_index) || session.allocation_index < 0 || session.allocation_index >= ALLOCATIONS_PER_L1 ||
+      !Number.isInteger(session.randomization_block) ||
+      session.randomization_block !== Math.floor(session.allocation_index / RANDOMIZATION_BLOCK_SIZE) ||
+      !Number.isInteger(session.block_position) ||
+      session.block_position !== session.allocation_index % RANDOMIZATION_BLOCK_SIZE + 1 ||
+      !/^R(?:0[1-9]|10)$/.test(session.route_id) ||
+      !Number.isInteger(session.option_layout_id) || session.option_layout_id < 0 || session.option_layout_id >= OPTION_LAYOUT_COUNT ||
       session.next_testlet_ordinal !== session.completed_testlets ||
       session.response_count !== session.completed_testlets * 3 ||
       session.completed_testlets < 0 || session.completed_testlets > TOTAL_TESTLETS ||
@@ -913,7 +1263,7 @@ function containsAnalyticKey(value: unknown): boolean {
   return Object.entries(value).some(([key, nested]) => prohibited.test(key) || containsAnalyticKey(nested));
 }
 
-async function publicTestletFromRow(row: RuntimeTestletRow): Promise<PublicRuntimeTestlet> {
+async function validatedCanonicalTestletFromRow(row: RuntimeTestletContentRow): Promise<ValidatedRuntimeTestlet> {
   let optionsValue: unknown;
   let itemsValue: unknown;
   try {
@@ -922,7 +1272,9 @@ async function publicTestletFromRow(row: RuntimeTestletRow): Promise<PublicRunti
   } catch {
     throw new Error("Invalid private runtime JSON");
   }
-  if (!SHA256_PATTERN.test(row.content_sha256) || typeof row.module_id !== "string" ||
+  if (!SHA256_PATTERN.test(row.content_sha256) || typeof row.testlet_id !== "string" ||
+      row.testlet_id.trim() !== row.testlet_id || utf8Length(row.testlet_id) < 1 || utf8Length(row.testlet_id) > 128 ||
+      typeof row.module_id !== "string" ||
       row.module_id.trim() !== row.module_id || utf8Length(row.module_id) < 1 || utf8Length(row.module_id) > 128 ||
       containsAnalyticKey(optionsValue) || containsAnalyticKey(itemsValue) ||
       !Array.isArray(optionsValue) || optionsValue.length !== 6 ||
@@ -930,7 +1282,7 @@ async function publicTestletFromRow(row: RuntimeTestletRow): Promise<PublicRunti
       new Set(optionsValue).size !== 6 || !Array.isArray(itemsValue) || itemsValue.length !== 3) {
     throw new Error("Invalid private runtime testlet");
   }
-  const items = itemsValue.map((value, index): PublicRuntimeItem => {
+  const items = itemsValue.map((value, index): ValidatedRuntimeItem => {
     if (!isPlainObject(value) || Object.keys(value).length !== 3 ||
         !["itemId", "prompt", "itemPositionWithinTestlet"].every((key) => Object.hasOwn(value, key)) ||
         typeof value.itemId !== "string" || typeof value.prompt !== "string" ||
@@ -955,7 +1307,22 @@ async function publicTestletFromRow(row: RuntimeTestletRow): Promise<PublicRunti
   if (await sha256Hex(stableJson(canonicalPayload)) !== row.content_sha256) {
     throw new Error("Private runtime testlet integrity check failed");
   }
-  return { testletId: row.testlet_id, options, items };
+  return { testletId: row.testlet_id, moduleId: row.module_id, options, items };
+}
+
+async function validatedTestletFromRow(
+  row: RuntimeTestletRow,
+  optionLayoutId: number
+): Promise<ValidatedRuntimeTestlet> {
+  const canonical = await validatedCanonicalTestletFromRow(row);
+  return { ...canonical, options: optionsForLayout(canonical.options, optionLayoutId) };
+}
+
+function browserTestlet(testlet: ValidatedRuntimeTestlet): PublicRuntimeTestlet {
+  return {
+    options: [...testlet.options],
+    items: testlet.items.map((item) => ({ prompt: item.prompt }))
+  };
 }
 
 async function nextRuntimeTestlet(env: Env, session: SessionRow): Promise<RuntimeTestletRow> {
@@ -1004,7 +1371,7 @@ async function statePayload(env: Env, session: SessionRow): Promise<JsonObject> 
         testlet_position_within_module: row.testlet_position_within_module,
         module_count: 10,
         testlets_per_module: 10,
-        testlet: await publicTestletFromRow(row)
+        testlet: browserTestlet(await validatedTestletFromRow(row, session.option_layout_id))
       };
     }
   }
@@ -1063,7 +1430,7 @@ async function existingTestletSubmission(
   idempotencyKey: string
 ): Promise<ExistingSubmissionRow | null> {
   const found = await env.DB.prepare(`
-    SELECT testlet_ordinal, idempotency_key, payload_sha256
+    SELECT testlet_ordinal, option_layout_id, idempotency_key, payload_sha256
     FROM testlet_submissions
     WHERE session_id = ? AND (testlet_ordinal = ? OR idempotency_key = ?)
     LIMIT 3
@@ -1093,6 +1460,9 @@ async function handleConfig(env: Env): Promise<Response> {
         publicBuild,
         env.CF_VERSION_METADATA?.tag ?? null
       );
+      if (collectionEnabled && row !== null) {
+        collectionEnabled = await immutableRuntimeMatches(env, row, expectedIdentity);
+      }
     }
   }
   return jsonResponse({
@@ -1137,7 +1507,7 @@ async function handleTestletResponse(request: Request, env: Env): Promise<Respon
   const existing = await existingTestletSubmission(env, session.session_id, body.testletOrdinal, body.idempotencyKey);
   if (existing) {
     if (existing.testlet_ordinal !== body.testletOrdinal || existing.idempotency_key !== body.idempotencyKey ||
-        existing.payload_sha256 !== payloadHash) {
+        existing.option_layout_id !== session.option_layout_id || existing.payload_sha256 !== payloadHash) {
       httpError(409, "RESPONSE_CONFLICT", "The response conflicts with a saved submission.");
     }
     const fresh = await authenticateSession(request, env);
@@ -1152,7 +1522,7 @@ async function handleTestletResponse(request: Request, env: Env): Promise<Respon
     httpError(409, "BREAK_REQUIRED", "The required module break must be completed first.");
   }
   const runtimeRow = await nextRuntimeTestlet(env, session);
-  const runtimeTestlet = await publicTestletFromRow(runtimeRow);
+  const runtimeTestlet = await validatedTestletFromRow(runtimeRow, session.option_layout_id);
   if (body.selectedOptions.some((option) => !runtimeTestlet.options.includes(option))) {
     httpError(400, "INVALID_RESPONSE", "The testlet response was not valid.");
   }
@@ -1160,14 +1530,14 @@ async function handleTestletResponse(request: Request, env: Env): Promise<Respon
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(`
       INSERT INTO testlet_submissions (
-        session_id, testlet_ordinal, testlet_id, idempotency_key, payload_sha256,
+        session_id, testlet_ordinal, testlet_id, option_layout_id, idempotency_key, payload_sha256,
         client_started_at, client_submitted_at, elapsed_ms, received_at
       )
-      SELECT session_id, ?, ?, ?, ?, ?, ?, ?, ?
+      SELECT session_id, ?, ?, ?, ?, ?, ?, ?, ?, ?
       FROM sessions
       WHERE session_id = ? AND status = 'in_progress' AND next_testlet_ordinal = ? AND breaks_completed = ?
     `).bind(
-      body.testletOrdinal, runtimeTestlet.testletId, body.idempotencyKey, payloadHash,
+      body.testletOrdinal, runtimeTestlet.testletId, session.option_layout_id, body.idempotencyKey, payloadHash,
       body.clientStartedAt, body.clientSubmittedAt, body.elapsedMs, now,
       session.session_id, body.testletOrdinal, requiredBreaks
     )
@@ -1176,11 +1546,12 @@ async function handleTestletResponse(request: Request, env: Env): Promise<Respon
     statements.push(env.DB.prepare(`
       INSERT INTO responses (
         session_id, response_ordinal, testlet_ordinal, testlet_id, item_id,
-        item_position_within_testlet, selected_option, recorded_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        item_position_within_testlet, selected_option, selected_option_position, recorded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
       session.session_id, body.testletOrdinal * 3 + index + 1, body.testletOrdinal,
-      runtimeTestlet.testletId, item.itemId, index + 1, body.selectedOptions[index], now
+      runtimeTestlet.testletId, item.itemId, index + 1, body.selectedOptions[index],
+      runtimeTestlet.options.indexOf(body.selectedOptions[index]) + 1, now
     ));
   });
   statements.push(
@@ -1202,7 +1573,7 @@ async function handleTestletResponse(request: Request, env: Env): Promise<Respon
   } catch {
     const raced = await existingTestletSubmission(env, session.session_id, body.testletOrdinal, body.idempotencyKey);
     if (!raced || raced.testlet_ordinal !== body.testletOrdinal || raced.idempotency_key !== body.idempotencyKey ||
-        raced.payload_sha256 !== payloadHash) {
+        raced.option_layout_id !== session.option_layout_id || raced.payload_sha256 !== payloadHash) {
       httpError(409, "RESPONSE_CONFLICT", "The response could not be saved because the session changed.", true);
     }
   }
@@ -1292,15 +1663,19 @@ async function handleComplete(request: Request, env: Env): Promise<Response> {
         LEFT JOIN runtime_route_testlets rr
           ON rr.release_id = ? AND rr.route_id = ? AND rr.testlet_ordinal = ts.testlet_ordinal AND rr.testlet_id = ts.testlet_id
         WHERE ts.session_id = ? AND rr.testlet_id IS NULL
-      ) AS invalid_route_submission_count
+      ) AS invalid_route_submission_count,
+      (SELECT COUNT(*) FROM testlet_submissions ts
+        WHERE ts.session_id = ? AND ts.option_layout_id <> ?) AS invalid_option_layout_submission_count
   `).bind(
     session.session_id, session.session_id, session.session_id,
-    session.release_id, session.route_id, session.session_id
+    session.release_id, session.route_id, session.session_id,
+    session.session_id, session.option_layout_id
   ).first<CompletionCountsRow>();
   if (!counts || session.completed_testlets !== TOTAL_TESTLETS || session.next_testlet_ordinal !== TOTAL_TESTLETS ||
       session.response_count !== TOTAL_RESPONSES || session.breaks_completed !== TOTAL_BREAKS ||
       counts.submission_count !== TOTAL_TESTLETS || counts.response_count !== TOTAL_RESPONSES ||
-      counts.break_count !== TOTAL_BREAKS || counts.invalid_route_submission_count !== 0) {
+      counts.break_count !== TOTAL_BREAKS || counts.invalid_route_submission_count !== 0 ||
+      counts.invalid_option_layout_submission_count !== 0) {
     httpError(409, "SESSION_INCOMPLETE", "The full response and break record has not yet been verified.");
   }
   const now = new Date().toISOString();

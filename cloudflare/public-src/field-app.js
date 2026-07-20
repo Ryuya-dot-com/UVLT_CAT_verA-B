@@ -143,13 +143,17 @@ function verifiedProlificCompletionUrl(value) {
 async function refreshState() {
   root.setAttribute("aria-busy", "true");
   try {
-    currentState = await api("/api/session/state");
-    updateSaveState(currentState);
-    renderState();
+    applyConfirmedState(await api("/api/session/state"));
   } catch (error) {
     root.setAttribute("aria-busy", "false");
     throw error;
   }
+}
+
+function applyConfirmedState(state) {
+  currentState = state;
+  updateSaveState(currentState);
+  renderState();
 }
 
 async function recoverFromStaleState(onFailure) {
@@ -201,9 +205,12 @@ function renderTestlet(step) {
     root.setAttribute("aria-busy", "true");
     showFormMessage(message, "Saving securely…");
     try {
-      await api("/api/session/testlet-response", { method: "POST", body: pendingSubmission });
-      await refreshState();
+      const confirmedState = await api("/api/session/testlet-response", {
+        method: "POST",
+        body: pendingSubmission
+      });
       pendingSubmission = null;
+      applyConfirmedState(confirmedState);
     } catch (error) {
       root.setAttribute("aria-busy", "false");
       if (error.status === 409) {
@@ -255,11 +262,11 @@ function renderBreak(step) {
     root.setAttribute("aria-busy", "true");
     showFormMessage(message, "Saving the break confirmation…");
     try {
-      await api("/api/session/break-complete", {
+      const confirmedState = await api("/api/session/break-complete", {
         method: "POST",
         body: { after_module_position: step.after_module_position }
       });
-      await refreshState();
+      applyConfirmedState(confirmedState);
     } catch (error) {
       root.setAttribute("aria-busy", "false");
       if (error.status === 409) {

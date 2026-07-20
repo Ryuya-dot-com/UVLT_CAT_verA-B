@@ -14,6 +14,20 @@ CREATE TABLE runtime_releases (
     CHECK (length(bank_sha256) = 64 AND bank_sha256 NOT GLOB '*[^0-9a-f]*'),
   routes_sha256 TEXT NOT NULL
     CHECK (length(routes_sha256) = 64 AND routes_sha256 NOT GLOB '*[^0-9a-f]*'),
+  allocation_schedule_sha256 TEXT
+    CHECK (allocation_schedule_sha256 IS NULL OR (
+      length(allocation_schedule_sha256) = 64 AND allocation_schedule_sha256 NOT GLOB '*[^0-9a-f]*'
+    )),
+  randomization_seed_fingerprint TEXT
+    CHECK (randomization_seed_fingerprint IS NULL OR (
+      length(randomization_seed_fingerprint) = 71 AND
+      substr(randomization_seed_fingerprint, 1, 7) = 'sha256:' AND
+      substr(randomization_seed_fingerprint, 8) NOT GLOB '*[^0-9a-f]*'
+    )),
+  randomization_algorithm TEXT
+    CHECK (randomization_algorithm IS NULL OR randomization_algorithm = 'hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1'),
+  option_layout_algorithm TEXT
+    CHECK (option_layout_algorithm IS NULL OR option_layout_algorithm = 'even-order-williams-square-6-canonical-first-v1'),
   participant_hmac_key_fingerprint TEXT
     CHECK (participant_hmac_key_fingerprint IS NULL OR (
       length(participant_hmac_key_fingerprint) = 71 AND
@@ -35,8 +49,20 @@ CREATE TABLE runtime_releases (
   created_at TEXT NOT NULL,
   frozen_at TEXT,
   CHECK (active = 0 OR (
+    public_build_manifest_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    runtime_manifest_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    bank_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    routes_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    allocation_schedule_sha256 IS NOT NULL AND
+    allocation_schedule_sha256 <> '0000000000000000000000000000000000000000000000000000000000000000' AND
+    randomization_seed_fingerprint IS NOT NULL AND
+    randomization_seed_fingerprint <> 'sha256:0000000000000000000000000000000000000000000000000000000000000000' AND
+    randomization_algorithm IS NOT NULL AND
+    option_layout_algorithm IS NOT NULL AND
     participant_hmac_key_fingerprint IS NOT NULL AND
+    participant_hmac_key_fingerprint <> 'sha256:0000000000000000000000000000000000000000000000000000000000000000' AND
     prolific_completion_code_fingerprint IS NOT NULL AND
+    prolific_completion_code_fingerprint <> 'sha256:0000000000000000000000000000000000000000000000000000000000000000' AND
     prolific_completion_action IS NOT NULL
   ))
 );
@@ -84,6 +110,29 @@ CREATE TABLE runtime_route_testlets (
     ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
+-- Each L1 stratum receives an independently generated, frozen sequence of
+-- thirty randomized blocks. Every block contains each Williams route once;
+-- the six option layouts are balanced within every route and L1 stratum.
+CREATE TABLE runtime_allocation_slots (
+  release_id TEXT NOT NULL,
+  l1 TEXT NOT NULL CHECK (l1 IN ('ja', 'vi')),
+  allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 299),
+  randomization_block INTEGER NOT NULL CHECK (randomization_block BETWEEN 0 AND 29),
+  block_position INTEGER NOT NULL CHECK (block_position BETWEEN 1 AND 10),
+  route_id TEXT NOT NULL CHECK (route_id IN ('R01', 'R02', 'R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10')),
+  option_layout_id INTEGER NOT NULL CHECK (option_layout_id BETWEEN 0 AND 5),
+  CHECK (allocation_index = randomization_block * 10 + block_position - 1),
+  PRIMARY KEY (release_id, l1, allocation_index),
+  UNIQUE (release_id, l1, randomization_block, block_position),
+  UNIQUE (release_id, l1, randomization_block, route_id),
+  UNIQUE (
+    release_id, l1, allocation_index, randomization_block,
+    block_position, route_id, option_layout_id
+  ),
+  FOREIGN KEY (release_id) REFERENCES runtime_releases(release_id)
+    ON UPDATE RESTRICT ON DELETE RESTRICT
+);
+
 CREATE TABLE sessions (
   session_id TEXT PRIMARY KEY,
   release_id TEXT NOT NULL,
@@ -94,7 +143,10 @@ CREATE TABLE sessions (
   submission_link_hmac TEXT NOT NULL
     CHECK (length(submission_link_hmac) = 64 AND submission_link_hmac NOT GLOB '*[^0-9a-f]*'),
   allocation_index INTEGER NOT NULL CHECK (allocation_index BETWEEN 0 AND 299),
+  randomization_block INTEGER NOT NULL CHECK (randomization_block BETWEEN 0 AND 29),
+  block_position INTEGER NOT NULL CHECK (block_position BETWEEN 1 AND 10),
   route_id TEXT NOT NULL CHECK (route_id IN ('R01', 'R02', 'R03', 'R04', 'R05', 'R06', 'R07', 'R08', 'R09', 'R10')),
+  option_layout_id INTEGER NOT NULL CHECK (option_layout_id BETWEEN 0 AND 5),
   token_sha256 TEXT NOT NULL
     CHECK (length(token_sha256) = 64 AND token_sha256 NOT GLOB '*[^0-9a-f]*'),
   token_expires_at TEXT NOT NULL,
@@ -115,15 +167,24 @@ CREATE TABLE sessions (
   FOREIGN KEY (release_id) REFERENCES runtime_releases(release_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (study_id, release_id, l1) REFERENCES studies(study_id, release_id, l1)
     ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (
+    release_id, l1, allocation_index, randomization_block,
+    block_position, route_id, option_layout_id
+  ) REFERENCES runtime_allocation_slots(
+    release_id, l1, allocation_index, randomization_block,
+    block_position, route_id, option_layout_id
+  ) ON UPDATE RESTRICT ON DELETE RESTRICT,
   UNIQUE (submission_link_hmac),
   UNIQUE (study_id, participant_link_hmac),
-  UNIQUE (release_id, l1, allocation_index)
+  UNIQUE (release_id, l1, allocation_index),
+  UNIQUE (session_id, option_layout_id)
 );
 
 CREATE TABLE testlet_submissions (
   session_id TEXT NOT NULL,
   testlet_ordinal INTEGER NOT NULL CHECK (testlet_ordinal BETWEEN 0 AND 99),
   testlet_id TEXT NOT NULL,
+  option_layout_id INTEGER NOT NULL CHECK (option_layout_id BETWEEN 0 AND 5),
   idempotency_key TEXT NOT NULL CHECK (length(idempotency_key) BETWEEN 8 AND 128),
   payload_sha256 TEXT NOT NULL
     CHECK (length(payload_sha256) = 64 AND payload_sha256 NOT GLOB '*[^0-9a-f]*'),
@@ -133,7 +194,9 @@ CREATE TABLE testlet_submissions (
   received_at TEXT NOT NULL,
   PRIMARY KEY (session_id, testlet_ordinal),
   UNIQUE (session_id, idempotency_key),
-  FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+  UNIQUE (session_id, testlet_ordinal, testlet_id),
+  FOREIGN KEY (session_id, option_layout_id) REFERENCES sessions(session_id, option_layout_id)
+    ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
 CREATE TABLE responses (
@@ -144,11 +207,16 @@ CREATE TABLE responses (
   item_id TEXT NOT NULL,
   item_position_within_testlet INTEGER NOT NULL CHECK (item_position_within_testlet BETWEEN 1 AND 3),
   selected_option TEXT NOT NULL CHECK (length(selected_option) BETWEEN 1 AND 256),
+  selected_option_position INTEGER NOT NULL CHECK (selected_option_position BETWEEN 1 AND 6),
   recorded_at TEXT NOT NULL,
+  CHECK (response_ordinal = testlet_ordinal * 3 + item_position_within_testlet),
   PRIMARY KEY (session_id, response_ordinal),
   UNIQUE (session_id, item_id),
   UNIQUE (session_id, testlet_ordinal, item_position_within_testlet),
   FOREIGN KEY (session_id, testlet_ordinal) REFERENCES testlet_submissions(session_id, testlet_ordinal)
+    ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (session_id, testlet_ordinal, testlet_id)
+    REFERENCES testlet_submissions(session_id, testlet_ordinal, testlet_id)
     ON UPDATE RESTRICT ON DELETE RESTRICT
 );
 
@@ -168,6 +236,7 @@ CREATE TABLE session_events (
 
 CREATE INDEX idx_studies_release_active ON studies(release_id, active, l1);
 CREATE INDEX idx_route_next_testlet ON runtime_route_testlets(release_id, route_id, testlet_ordinal);
+CREATE INDEX idx_allocation_slots_release_l1 ON runtime_allocation_slots(release_id, l1, allocation_index);
 CREATE INDEX idx_sessions_release_l1 ON sessions(release_id, l1, allocation_index);
 CREATE INDEX idx_submissions_session ON testlet_submissions(session_id, testlet_ordinal);
 CREATE INDEX idx_responses_session_testlet ON responses(session_id, testlet_ordinal);
@@ -209,6 +278,10 @@ BEGIN
     NEW.runtime_manifest_sha256 IS NOT OLD.runtime_manifest_sha256 OR
     NEW.bank_sha256 IS NOT OLD.bank_sha256 OR
     NEW.routes_sha256 IS NOT OLD.routes_sha256 OR
+    NEW.allocation_schedule_sha256 IS NOT OLD.allocation_schedule_sha256 OR
+    NEW.randomization_seed_fingerprint IS NOT OLD.randomization_seed_fingerprint OR
+    NEW.randomization_algorithm IS NOT OLD.randomization_algorithm OR
+    NEW.option_layout_algorithm IS NOT OLD.option_layout_algorithm OR
     NEW.participant_hmac_key_fingerprint IS NOT OLD.participant_hmac_key_fingerprint OR
     NEW.prolific_completion_code_fingerprint IS NOT OLD.prolific_completion_code_fingerprint OR
     NEW.prolific_completion_action IS NOT OLD.prolific_completion_action OR
@@ -220,10 +293,19 @@ BEGIN
   THEN RAISE(ABORT, 'runtime release activation may only change active') END;
 
   SELECT CASE WHEN NEW.frozen_at IS NULL OR
+    NEW.allocation_schedule_sha256 IS NULL OR
+    NEW.randomization_seed_fingerprint IS NULL OR
+    NEW.randomization_algorithm IS NULL OR
+    NEW.option_layout_algorithm IS NULL OR
     NEW.participant_hmac_key_fingerprint IS NULL OR
     NEW.prolific_completion_code_fingerprint IS NULL OR
     NEW.prolific_completion_action IS NULL
     THEN RAISE(ABORT, 'runtime release identity is incomplete') END;
+
+  SELECT CASE WHEN
+    NEW.randomization_algorithm IS NOT 'hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1' OR
+    NEW.option_layout_algorithm IS NOT 'even-order-williams-square-6-canonical-first-v1'
+    THEN RAISE(ABORT, 'runtime release randomization algorithms are unsupported') END;
 
   SELECT CASE WHEN (
     SELECT COUNT(*) FROM studies WHERE release_id = NEW.release_id
@@ -247,6 +329,50 @@ BEGIN
     SELECT COUNT(DISTINCT route_id) FROM runtime_route_testlets WHERE release_id = NEW.release_id
   ) <> 10
     THEN RAISE(ABORT, 'runtime release requires exactly 1000 rows across 10 routes') END;
+
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = NEW.release_id
+  ) <> 600 OR (
+    SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = NEW.release_id AND l1 = 'ja'
+  ) <> 300 OR (
+    SELECT COUNT(*) FROM runtime_allocation_slots WHERE release_id = NEW.release_id AND l1 = 'vi'
+  ) <> 300
+    THEN RAISE(ABORT, 'runtime release requires exactly 300 allocation slots per L1') END;
+
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM (
+      SELECT l1, randomization_block
+      FROM runtime_allocation_slots
+      WHERE release_id = NEW.release_id
+      GROUP BY l1, randomization_block
+      HAVING COUNT(*) = 10 AND
+        COUNT(DISTINCT route_id) = 10 AND
+        COUNT(DISTINCT option_layout_id) = 6
+    )
+  ) <> 60
+    THEN RAISE(ABORT, 'runtime release requires 60 complete route-and-layout randomization blocks') END;
+
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM (
+      SELECT l1, randomization_block, option_layout_id, COUNT(*) AS layout_count
+      FROM runtime_allocation_slots
+      WHERE release_id = NEW.release_id
+      GROUP BY l1, randomization_block, option_layout_id
+      HAVING COUNT(*) NOT BETWEEN 1 AND 2
+    )
+  ) <> 0
+    THEN RAISE(ABORT, 'runtime release block-layout counts must be one or two') END;
+
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM (
+      SELECT l1, route_id, option_layout_id
+      FROM runtime_allocation_slots
+      WHERE release_id = NEW.release_id
+      GROUP BY l1, route_id, option_layout_id
+      HAVING COUNT(*) = 5
+    )
+  ) <> 120
+    THEN RAISE(ABORT, 'runtime release requires every L1-route-layout cell exactly five times') END;
 END;
 
 CREATE TRIGGER studies_reject_active_release_insert
@@ -345,4 +471,115 @@ WHEN EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'active release routes are immutable');
+END;
+
+CREATE TRIGGER runtime_allocation_slots_reject_active_release_insert
+BEFORE INSERT ON runtime_allocation_slots
+WHEN EXISTS (
+  SELECT 1 FROM runtime_releases WHERE release_id = NEW.release_id AND active = 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'active release allocation slots are immutable');
+END;
+
+CREATE TRIGGER runtime_allocation_slots_reject_active_release_update
+BEFORE UPDATE ON runtime_allocation_slots
+WHEN EXISTS (
+  SELECT 1 FROM runtime_releases WHERE release_id = OLD.release_id AND active = 1
+) OR EXISTS (
+  SELECT 1 FROM runtime_releases WHERE release_id = NEW.release_id AND active = 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'active release allocation slots are immutable');
+END;
+
+CREATE TRIGGER runtime_allocation_slots_reject_active_release_delete
+BEFORE DELETE ON runtime_allocation_slots
+WHEN EXISTS (
+  SELECT 1 FROM runtime_releases WHERE release_id = OLD.release_id AND active = 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'active release allocation slots are immutable');
+END;
+
+-- Session linkage and allocation identity are fixed at insertion. Token,
+-- progress counters, status, and completion timestamps remain mutable through
+-- the audited Worker state machine.
+CREATE TRIGGER sessions_reject_identity_update
+BEFORE UPDATE ON sessions
+WHEN
+  NEW.session_id IS NOT OLD.session_id OR
+  NEW.release_id IS NOT OLD.release_id OR
+  NEW.study_id IS NOT OLD.study_id OR
+  NEW.l1 IS NOT OLD.l1 OR
+  NEW.participant_link_hmac IS NOT OLD.participant_link_hmac OR
+  NEW.submission_link_hmac IS NOT OLD.submission_link_hmac OR
+  NEW.allocation_index IS NOT OLD.allocation_index OR
+  NEW.randomization_block IS NOT OLD.randomization_block OR
+  NEW.block_position IS NOT OLD.block_position OR
+  NEW.route_id IS NOT OLD.route_id OR
+  NEW.option_layout_id IS NOT OLD.option_layout_id OR
+  NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'session linkage and allocation identity are immutable');
+END;
+
+-- Validate each stored choice against the frozen testlet, canonical item row,
+-- session layout, and displayed option position. This independently checks the
+-- Worker-computed position at the D1 boundary.
+CREATE TRIGGER responses_validate_runtime_mapping
+BEFORE INSERT ON responses
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM testlet_submissions ts
+  JOIN sessions s ON s.session_id = ts.session_id
+  JOIN runtime_testlets t
+    ON t.release_id = s.release_id AND t.testlet_id = ts.testlet_id
+  WHERE ts.session_id = NEW.session_id
+    AND ts.testlet_ordinal = NEW.testlet_ordinal
+    AND ts.testlet_id = NEW.testlet_id
+    AND ts.option_layout_id = s.option_layout_id
+    AND json_extract(
+      t.items_json,
+      '$[' || CAST(NEW.item_position_within_testlet - 1 AS TEXT) || '].itemId'
+    ) = NEW.item_id
+    AND json_extract(
+      t.items_json,
+      '$[' || CAST(NEW.item_position_within_testlet - 1 AS TEXT) || '].itemPositionWithinTestlet'
+    ) = NEW.item_position_within_testlet
+    AND json_extract(
+      t.options_json,
+      '$[' || CAST(
+        CASE s.option_layout_id * 10 + NEW.selected_option_position
+          WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 3 THEN 2 WHEN 4 THEN 3 WHEN 5 THEN 4 WHEN 6 THEN 5
+          WHEN 11 THEN 1 WHEN 12 THEN 3 WHEN 13 THEN 0 WHEN 14 THEN 5 WHEN 15 THEN 2 WHEN 16 THEN 4
+          WHEN 21 THEN 3 WHEN 22 THEN 5 WHEN 23 THEN 1 WHEN 24 THEN 4 WHEN 25 THEN 0 WHEN 26 THEN 2
+          WHEN 31 THEN 5 WHEN 32 THEN 4 WHEN 33 THEN 3 WHEN 34 THEN 2 WHEN 35 THEN 1 WHEN 36 THEN 0
+          WHEN 41 THEN 4 WHEN 42 THEN 2 WHEN 43 THEN 5 WHEN 44 THEN 0 WHEN 45 THEN 3 WHEN 46 THEN 1
+          WHEN 51 THEN 2 WHEN 52 THEN 0 WHEN 53 THEN 4 WHEN 54 THEN 1 WHEN 55 THEN 5 WHEN 56 THEN 3
+          ELSE -1
+        END AS TEXT
+      ) || ']'
+    ) = NEW.selected_option
+)
+BEGIN
+  SELECT RAISE(ABORT, 'response does not match frozen runtime content and option layout');
+END;
+
+CREATE TRIGGER testlet_submissions_reject_update
+BEFORE UPDATE ON testlet_submissions
+BEGIN
+  SELECT RAISE(ABORT, 'testlet submissions are append-only');
+END;
+
+CREATE TRIGGER responses_reject_update
+BEFORE UPDATE ON responses
+BEGIN
+  SELECT RAISE(ABORT, 'responses are append-only');
+END;
+
+CREATE TRIGGER session_events_reject_update
+BEFORE UPDATE ON session_events
+BEGIN
+  SELECT RAISE(ABORT, 'session events are append-only');
 END;

@@ -9,11 +9,13 @@ The deployed public asset directory is `dist/`, generated from an explicit five-
 | Location | Permitted content |
 |---|---|
 | Public `dist/` | Participant HTML, CSS, and browser JavaScript only |
-| Private D1 | Frozen keyless prompts/options, route order, HMAC linkage values, unscored selected-option strings, timings, and server events |
+| Private D1 | Frozen keyless prompts/options, route order, allocation slots, HMAC linkage values, unscored selected-option strings/positions, timings, and server events |
 | Worker secrets | Prolific API token, participant-linkage HMAC key, and completion code |
 | Offline restricted environment only | Canonical answer keys, scoring, correctness, scores, IRT parameters, and source workbooks |
 
 Prolific identifiers are pseudonymous personal data. The Worker receives the three launch identifiers, verifies them against Prolific, stores only domain-separated HMAC linkage values, sets an HttpOnly session cookie, and redirects to a clean URL. The cookie and its server-side token expire after 24 hours. The response data remain linkable—not anonymous—and require restricted handling.
+
+`cloudflare/private/` is excluded from Git, but that does not exclude it from cloud-synchronisation software, device backups, or inherited folder sharing. Before generating either the participant-level schedule or the stimulus-bearing D1 seed, inspect the actual working-copy location and have the institutional data-governance owner approve that storage account, device encryption, synchronisation, retention, and access list. If it is not approved, create the private operational working copy in approved encrypted storage first; do not rely on `.gitignore` as a confidentiality control.
 
 A first verified launch does not require a pre-existing cookie. Once that launch has allocated a session, however, the launch URL alone is not a recovery credential: `/join` rotates the token only when the browser presents the still-valid cookie for that exact D1 session. A missing, wrong, stale, or expired cookie fails closed with `SESSION_RECOVERY_REQUIRED` and never receives a replacement cookie. This prevents a copied Prolific launch URL from taking over an existing session, but it also means cookie loss currently requires an approved study-team support decision; there is no automated or investigator bypass endpoint.
 
@@ -29,7 +31,7 @@ Prolific launch URL
   -> Study ID maps to ja or vi in D1
   -> existing session requires its exact still-valid cookie
   -> D1 allocates index 0...299 within that L1
-  -> route = R(1 + allocation_index mod 10)
+  -> frozen schedule supplies route + option layout
   -> HttpOnly cookie + 303 redirect to /
   -> one authenticated testlet at a time
   -> 100 atomic testlet saves + 9 required breaks
@@ -37,24 +39,30 @@ Prolific launch URL
   -> Prolific completion redirect
 ```
 
-At 300 starts per L1, the allocation invariant yields exactly 30 starts on each of R01–R10. A duplicate launch with the current valid session cookie resumes the existing D1 session and does not consume another allocation index. A duplicate launch without that cookie is rejected rather than creating a new allocation. The current schema does not reuse dropout indices; any replacement policy beyond 300 starts must be specified before recruitment.
+The schedule is generated before release freeze from a secret seed. Japanese- and Vietnamese-L1 strata are randomized independently in 30 permuted blocks of ten starts. Every block contains R01–R10 once. Routes are crossed with six option-column layouts so that, at 300 starts per L1, each route receives 30 starts, each layout 50, and each route × layout cell five. A duplicate launch with the current valid session cookie resumes the same route/layout and does not consume another allocation index. A duplicate launch without that cookie is rejected rather than creating a new allocation. These invariants describe allocated starts, not completers. The Worker never deletes sessions or reuses dropout indices; an administrator must not delete a session during recruitment because deletion of the highest allocation could make that index available again. The approved withdrawal/redaction procedure must preserve a non-identifying allocation tombstone, and any replacement or attrition policy must be specified before recruitment.
+
+The six layouts are an even-order Williams square relabelled so layout 0 reproduces canonical option order. Across them, each canonical option appears once in every displayed position and every directed adjacent pair appears once. Prompt-row order is intentionally kept canonical to preserve the original testlet definition and Form A/B comparison. Accordingly, this design controls option-column position and first-order adjacency but does not identify prompt-row-order effects.
 
 ## Local fail-closed checks
 
-Install the exact lockfile and run the code-only checks:
+Install the exact lockfile and run the public/private build checks:
 
 ```bash
 npm ci
+npm run build:field
+npm run audit:field
 npm run check:worker
 ```
 
-In the restricted content workspace, `build:private-seed` uses `cloudflare/release-config.example.json` by default and writes the keyless D1 seed to ignored `cloudflare/private/runtime-seed.sql`. Its public example contains four zero-hash sentinels, null completion-code controls, no Study IDs, an inactive release, and every approval gate set to `false`; replace the sentinels and null controls only with reviewed private-artifact, public-build, and Prolific settings. The public code-only repository deliberately lacks the required bank/route inputs, so invoking this command there must fail. The builder requires the release app version to equal `package.json`, verifies the raw SHA-256 and app version of `dist/build-manifest.json`, and refuses to create an active release unless all gates are `true`, a freeze time is recorded, both L1 Study IDs are supplied, and all reviewed hashes and completion controls match exactly.
+`build:randomization-schedule` requires `UVLT_RANDOMIZATION_SEED` from the process environment and writes the participant-level schedule plus a stimulus-free aggregate balance audit only to ignored `cloudflare/private/`. Supply the seed through an approved secret manager; never paste it into a command, shell history, file, issue, or log. The tool validates the Williams balance of the frozen routes before producing any schedule. Record the reported `allocationScheduleSha256` payload hash (not `allocationScheduleFileSha256`) and `seedFingerprint`, but keep the raw seed and participant-level schedule restricted throughout recruitment.
+
+`build:private-seed` is an optional preview command that may be run only in an approved private workspace. By default it uses `cloudflare/release-config.example.json` and writes the inactive keyless preview to ignored `cloudflare/private/runtime-seed.preview.sql`, physically distinct from the frozen production path. The example release is inactive, contains no Study IDs, and has every approval gate set to `false`. For a real release, always pass the reviewed private config and the explicit `cloudflare/private/runtime-seed.sql` output shown below. The builder requires the release app version to equal `package.json`, verifies the raw SHA-256 and app version of `dist/build-manifest.json`, validates the frozen schedule and its hash/fingerprint, and refuses to create an active release unless all gates are `true`, a freeze time is recorded, both L1 Study IDs are supplied, and all reviewed hashes match exactly.
 
 The committed `wrangler.jsonc` and its named staging/production environments are intentionally unusable for collection:
 
 - `COLLECTION_MODE` is `technical_only`.
 - `EXPECTED_RELEASE_ID` is `UNCONFIGURED`.
-- `EXPECTED_APP_VERSION`, the public build-manifest hash, the three private artifact hashes, both secret fingerprints, and the completion action are `UNCONFIGURED`.
+- `EXPECTED_APP_VERSION`, the public build-manifest hash, the four private artifact hashes (including the allocation schedule), both runtime-secret fingerprints, and the completion action are `UNCONFIGURED`.
 - the D1 UUID is all zeroes.
 - preview URLs are disabled.
 - required secrets are declared but absent.
@@ -64,10 +72,22 @@ The default and production targets disable `workers.dev`; staging is the only ta
 ## Private release preparation
 
 1. Copy `cloudflare/release-config.example.json` to ignored `cloudflare/private/release-config.json`.
-2. Keep `appVersion` equal to the exact `package.json` version. Record the reviewed release ID, public build-manifest hash, exact private artifact hashes, SHA-256 fingerprints of the exact UTF-8 HMAC key and completion code, the expected `MANUALLY_REVIEW` or `AUTOMATICALLY_APPROVE` action, approval gates, freeze time, and the two 24-character Study IDs.
+2. Keep `appVersion` equal to the exact `package.json` version. Record the reviewed release ID, public build-manifest hash, exact runtime-manifest/bank/route hashes, SHA-256 fingerprints of the exact UTF-8 HMAC key and completion code, the expected `MANUALLY_REVIEW` or `AUTOMATICALLY_APPROVE` action, approval gates, freeze time, and the two 24-character Study IDs.
 3. Set the Japanese Study row to `l1: "ja"` and the Vietnamese Study row to `l1: "vi"`. L1 is never accepted from participant input.
-4. Keep both the release and studies inactive for staging. Activate them only after the complete staging rehearsal and independent launch review.
-5. Build the seed:
+4. From an approved secret-management environment, inject a cryptographically random seed of at least 32 UTF-8 bytes as `UVLT_RANDOMIZATION_SEED` and generate the schedule. Do not place the seed literal in the command itself:
+
+```bash
+# UVLT_RANDOMIZATION_SEED is already injected by the approved secret manager.
+npm run build:randomization-schedule -- \
+  --config cloudflare/private/release-config.json \
+  --routes data/uvlt_routes.ab.williams10.dev.json \
+  --schedule-output cloudflare/private/randomization-schedule.json \
+  --audit-output cloudflare/private/design-balance.audit.json
+```
+
+Independently review the stimulus-free balance audit, then copy the reported `allocationScheduleSha256`, `seedFingerprint`, `randomizationAlgorithm`, and `optionLayoutAlgorithm` values into the corresponding release-config fields. The similarly named `allocationScheduleFileSha256` covers serialized file bytes and is provenance information, not the release-config payload hash. Destroy any unnecessary plaintext copy of the raw seed while retaining an approved recoverable secret-manager record. Once either output is written, the generator accepts only byte-identical regeneration and refuses to overwrite it with a different schedule or audit.
+5. Keep both the release and studies inactive for staging. Activate them only after the complete staging rehearsal and independent launch review.
+6. Build the D1 seed:
 
 ```bash
 node cloudflare/tools/build-private-seed.mjs \
@@ -75,7 +95,7 @@ node cloudflare/tools/build-private-seed.mjs \
   --output cloudflare/private/runtime-seed.sql
 ```
 
-The seed contains prompts/options but no answer key or scoring field. It must never be committed, uploaded to OSF, placed in `dist/`, or attached to a public issue.
+The D1 seed contains prompts/options and the frozen participant-level allocation schedule but no answer key or scoring field. It must never be committed, uploaded to OSF, placed in `dist/`, or attached to a public issue. Once written, the builder permits only byte-identical regeneration and refuses to overwrite the seed with different bytes. The aggregate design-balance audit contains no stimuli, prompts, options, testlet IDs, raw seed, or slot rows and may be released after independent inspection. Before recruitment, preregister whether the raw seed and participant-level schedule will be disclosed after a stated embargo, made available only under controlled access, or withheld for ethics/test-security reasons. The public OSF package must follow that frozen policy and otherwise excludes both artifacts.
 
 ## Cloudflare setup
 
@@ -95,6 +115,8 @@ cp cloudflare/wrangler.production.example.json \
 
 The committed template deliberately uses the reserved placeholder domain `uvlt-study.example.edu` and a zero D1 UUID. The production verifier rejects that domain; `example.edu`, `example.com`, `example.net`, `example.org`, and their subdomains; the reserved `.example`/`.invalid`/`.test`/`.localhost` suffixes; `workers.dev`; `pages.dev`; and any database name other than `uvlt-fixed-ab-calibration-production`. Replace the template route with exactly one institutionally controlled custom domain before attempting the field gate.
 
+Schema v3 was finalized before any authorized collection and therefore remains the baseline `0001_initial.sql`. If an earlier engineering-preview copy of `0001_initial.sql` was already recorded in a local, staging, or remote D1 migration table, Wrangler will not reapply the changed filename. Do not reuse that database for this release. Provision a fresh empty staging/production database (or write and independently validate an explicit upgrade migration) and verify its migration history before loading the seed. Never infer schema v3 readiness from the filename alone.
+
 Then apply the tracked migration and private seed explicitly to the intended database using its controlled config:
 
 ```bash
@@ -104,6 +126,8 @@ npx wrangler d1 execute uvlt-fixed-ab-calibration-production --remote \
   --config cloudflare/private/wrangler.production.json \
   --file=cloudflare/private/runtime-seed.sql
 ```
+
+The generated seed deliberately omits explicit `BEGIN TRANSACTION` and `COMMIT` statements. Cloudflare's D1 import guidance requires those statements to be removed before `wrangler d1 execute --file`; leaving them in can produce a nested-transaction failure that local SQLite checks do not reveal.
 
 Do not create a plaintext production secrets file. Keep each value in an approved secret manager and enter it only through Wrangler's interactive prompt. In particular, never place `production.secrets.env` or an equivalent file in a local working tree, the repository, an OSF package, a shell command, or shell history:
 
@@ -121,13 +145,13 @@ Each command prompts for the value without requiring a local secret file. Obtain
 
 The predeploy gate runs the locally installed, exactly pinned Wrangler 4 executable with `secret list --format json` and accepts exactly the three approved remote secret names. Cloudflare does not reveal their values, and the gate neither requests nor prints them. The Worker independently hashes `PARTICIPANT_HMAC_KEY` and `PROLIFIC_COMPLETION_CODE` at runtime; if either fingerprint differs from the release row or expected Worker variable, readiness fails closed and `/api/config` reports `collection_enabled: false`.
 
-`npm run deploy` is the only supported production deployment entry point. Its automatic predeploy gate rebuilds and audits `dist/` first, requires an active approved release, verifies the package/release/D1-seed/public-manifest identity, validates the private custom-domain/D1/variable configuration and exact remote secret-name set, runs Worker tests and type checking, and invokes the same deployment wrapper in dry-run mode. The wrapper executes only the exactly pinned local Wrangler with `shell: false`, preserves the Worker secrets already stored by Cloudflare, and passes the frozen release ID as the Cloudflare Worker version tag:
+`npm run deploy` is the only supported production deployment entry point. Its automatic predeploy gate rebuilds and audits `dist/` first, requires an active approved release, verifies the package/release/D1-seed/public-manifest/allocation-schedule identity, validates the private custom-domain/D1/variable configuration and exact remote secret-name set, runs randomization and Worker tests plus type checking, and invokes the same deployment wrapper in dry-run mode. The wrapper executes only the exactly pinned local Wrangler with `shell: false`, preserves the Worker secrets already stored by Cloudflare, and passes the frozen release ID as the Cloudflare Worker version tag:
 
 ```bash
 npm run deploy
 ```
 
-Do not bypass this lifecycle with a raw `wrangler deploy` command, and never reuse a release ID/version tag for changed code, assets, bindings, or compatibility settings. A deployment is not launch authorization. Production activation requires a controlled configuration whose `COLLECTION_MODE` is `field` and whose expected release ID, app version, public manifest hash, private hashes, secret fingerprints, and completion action exactly match the active D1 release. At runtime the Worker also requires the actual static manifest bytes/app version and `CF_VERSION_METADATA.tag` to match. Do not make those changes until all launch gates and live checks below pass.
+Do not bypass this lifecycle with a raw `wrangler deploy` command, and never reuse a release ID/version tag for changed code, assets, bindings, or compatibility settings. A deployment is not launch authorization. Production activation requires a controlled configuration whose `COLLECTION_MODE` is `field` and whose expected release ID, app version, public manifest hash, private hashes, secret fingerprints, and completion action exactly match the active D1 release. At runtime the Worker also reconstructs the canonical schedule artifact from all 600 immutable D1 slot rows and requires its SHA-256 to match the frozen release and Worker variable; a merely count-balanced but differently ordered table fails closed. The actual static manifest bytes/app version and `CF_VERSION_METADATA.tag` must also match. Do not make those changes until all launch gates and live checks below pass.
 
 Immediately after deployment, inspect the public, non-secret readiness response from the controlled domain:
 
@@ -136,7 +160,7 @@ curl --fail --silent --show-error \
   https://<controlled-study-domain>/api/config
 ```
 
-For an approved active release, verify `ok: true`, the expected protocol/count fields, and `collection_enabled: true`. A false value—including an app version, public manifest, Worker version tag, or participant-HMAC fingerprint mismatch—is a hard stop: do not open either Prolific study until the package, release identity, D1 state, deployed version/assets, Worker variables, and remotely stored secret have been reconciled.
+For an approved active release, verify `ok: true`, the expected protocol/count fields, and `collection_enabled: true`. A false value—including an app version, public manifest, allocation-schedule row/hash, Worker version tag, or participant-HMAC fingerprint mismatch—is a hard stop: do not open either Prolific study until the package, release identity, D1 state, deployed version/assets, Worker variables, and remotely stored secret have been reconciled.
 
 ## Prolific configuration
 
@@ -160,6 +184,7 @@ Official references:
 - [Cloudflare Worker version metadata](https://developers.cloudflare.com/workers/runtime-apis/bindings/version-metadata/)
 - [Cloudflare Worker versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/)
 - [Cloudflare D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/)
+- [Cloudflare D1 import and export guidance](https://developers.cloudflare.com/d1/best-practices/import-export-data/)
 - [Cloudflare Worker secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
 - [Cloudflare zone HTTP-request log fields](https://developers.cloudflare.com/logs/logpush/logpush-job/datasets/zone/http_requests/)
 
@@ -173,7 +198,11 @@ All items must be evidenced, not merely asserted:
 - Japanese and Vietnamese instruction review;
 - timing and fatigue pilot for 100 testlets and nine breaks;
 - Prolific compensation and maximum-time settings based on the pilot;
+- a single frozen 600-slot allocation schedule whose hash, seed fingerprint, algorithm identifiers, Williams checks, within-block route counts, and L1 × route × option-layout cell counts have been independently reviewed;
+- a preregistered attrition, replacement, and allocation-exhaustion policy that distinguishes balance among starts from balance among completers and does not alter assignments after seeing outcomes;
+- a withdrawal/redaction procedure that removes data as required while preserving a non-identifying allocation tombstone, with a tested prohibition on ad hoc session deletion during recruitment;
 - D1 location, retention, deletion, incident-response, and backup/restore decisions;
+- explicit approval of the private operational workspace, including any synchronisation and inherited sharing configuration, or relocation to institutionally approved encrypted storage before schedule/seed generation;
 - a production custom domain and separate staging/production D1 bindings;
 - rate-limit/WAF rules for `/join` and write endpoints, tested without blocking legitimate shared-network participants;
 - private export and offline HMAC-linkage rehearsal;
@@ -187,6 +216,8 @@ All items must be evidenced, not merely asserted:
 - confirmation that zone HTTP logs, Logpush/Log Explorer, WAF/security events, and their retention settings do not store the study host's full launch URI or query; use path-only fields and exclude or redact `ClientRequestURI`-style query-bearing fields;
 - independent review of the final release hashes and live configuration.
 
+None of the remote D1 application, production Cloudflare deployment, custom-domain routing, or Prolific test-participant rehearsal has yet been performed by this code review. The command examples and local synthetic tests are procedures and evidence for local behavior, not evidence that those live launch gates have passed.
+
 ## Export, linkage, and reproducibility
 
 Do not expose a public export endpoint. Export D1 from a restricted researcher machine and write only to an approved encrypted location:
@@ -197,6 +228,6 @@ npx wrangler d1 export uvlt-fixed-ab-calibration-production --remote \
   --output=cloudflare/exports/uvlt-fixed-ab-restricted.sql
 ```
 
-Cloudflare notes that a D1 export blocks other database requests, so schedule it outside active collection. Preserve the migration files, release configuration without secrets, package lock, Worker version ID and one-time release tag, public/private artifact SHA-256 values, export SHA-256, and export timestamp. Apply the same domain-separated HMAC procedure to the restricted Prolific CSV to join records offline; do not export or publish the HMAC key.
+Cloudflare notes that a D1 export blocks other database requests, so schedule it outside active collection. Preserve the migration files, release configuration without secrets, package lock, randomization algorithm identifiers, seed fingerprint, allocation-schedule hash, stimulus-free balance audit, Worker version ID and one-time release tag, public/private artifact SHA-256 values, export SHA-256, and export timestamp. Apply the same domain-separated HMAC procedure to the restricted Prolific CSV to join records offline; do not export or publish the HMAC key. The analysis extract should retain route, option-layout ID, displayed option position, start/completion status, and L1 so that balance and position effects can be reported explicitly.
 
-The public/OSF package may contain code, schemas, synthetic tests, aggregate outputs, and software provenance. It must exclude the private seed, raw D1 export, row-level response data, HMAC linkage values, Prolific identifiers, secrets, stimuli without permission, and canonical keys.
+The public/OSF package may contain code, schemas, synthetic tests, aggregate outputs, and software provenance. It must exclude the private D1 seed, raw D1 export, row-level response data, HMAC linkage values, Prolific identifiers, secrets, stimuli without permission, and canonical keys. The raw randomization seed and participant-level allocation schedule are included only if the preregistered postcollection disclosure policy and ethics/test-security review explicitly authorize them; otherwise publish only their fingerprints/hashes and the stimulus-free balance audit.

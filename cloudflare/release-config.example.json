@@ -1,10 +1,13 @@
 {
-  "schemaVersion": "uvlt-fixed-ab-field-release-config-2",
+  "schemaVersion": "uvlt-fixed-ab-field-release-config-3",
   "releaseId": "uvlt-fixed-ab-unapproved-20260720",
   "appVersion": "0.1.0-dev",
   "createdAt": "2026-07-20T00:00:00.000Z",
   "frozenAt": null,
   "active": false,
+  "randomizationSeedFingerprint": null,
+  "randomizationAlgorithm": null,
+  "optionLayoutAlgorithm": null,
   "participantHmacKeyFingerprint": null,
   "prolificCompletionCodeFingerprint": null,
   "prolificCompletionAction": null,
@@ -12,6 +15,7 @@
     "runtimeManifestPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "bankPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "routesPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "allocationScheduleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
     "publicBuildManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   "approvals": {
@@ -23,6 +27,9 @@
     "ethicsApprovalRecorded": false,
     "privacyRetentionDeletionPlanRecorded": false,
     "protectedDataReceiptVerified": false,
+    "privateWorkspaceApprovalRecorded": false,
+    "randomizationScheduleReviewRecorded": false,
+    "attritionReplacementPolicyRecorded": false,
     "independentPrelaunchReviewCompleted": false
   },
   "studies": []

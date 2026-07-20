@@ -35,10 +35,58 @@ try {
   throw new Error("Private release config, package.json, and the installed local Wrangler package must be present and valid JSON");
 }
 
-assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-2", "Private release config schema is unsupported");
+assert(release?.schemaVersion === "uvlt-fixed-ab-field-release-config-3", "Private release config schema is unsupported");
 assert(release.active === true, "Private release config must be active before deployment");
 assert(typeof release.releaseId === "string" && /^[a-z0-9][a-z0-9._-]{7,127}$/.test(release.releaseId), "Private release ID is invalid");
 assert(release.appVersion === packageMetadata?.version, "Private release appVersion must exactly match package.json version");
+for (const field of [
+  "runtimeManifestPayloadSha256",
+  "bankPayloadSha256",
+  "routesPayloadSha256",
+  "allocationScheduleSha256",
+  "publicBuildManifestSha256"
+]) {
+  const value = release.expectedHashes?.[field];
+  assert(
+    /^[0-9a-f]{64}$/.test(value || "") && value !== "0".repeat(64),
+    `Private release expectedHashes.${field} is invalid`
+  );
+}
+assert(
+  /^sha256:[0-9a-f]{64}$/.test(release.randomizationSeedFingerprint || "") &&
+    release.randomizationSeedFingerprint !== `sha256:${"0".repeat(64)}`,
+  "Private release randomization seed fingerprint is invalid"
+);
+assert(
+  release.randomizationAlgorithm === "hmac-sha256-permuted-blocks-10-crossed-option-williams-6-v1" &&
+    release.optionLayoutAlgorithm === "even-order-williams-square-6-canonical-first-v1",
+  "Private release randomization algorithms are unsupported"
+);
+for (const approval of [
+  "contentOwnerApprovalRecorded",
+  "authoritativeAnswerKeyApprovalRecorded",
+  "participantInformationAndConsentApproved",
+  "japaneseAndVietnameseInstructionReviewRecorded",
+  "timingPilotCompleted",
+  "ethicsApprovalRecorded",
+  "privacyRetentionDeletionPlanRecorded",
+  "protectedDataReceiptVerified",
+  "privateWorkspaceApprovalRecorded",
+  "randomizationScheduleReviewRecorded",
+  "attritionReplacementPolicyRecorded",
+  "independentPrelaunchReviewCompleted"
+]) {
+  assert(release.approvals?.[approval] === true, `Private release approval ${approval} is not recorded`);
+}
+for (const [field, value] of [
+  ["participant HMAC-key fingerprint", release.participantHmacKeyFingerprint],
+  ["Prolific completion-code fingerprint", release.prolificCompletionCodeFingerprint]
+]) {
+  assert(
+    /^sha256:[0-9a-f]{64}$/.test(value || "") && value !== `sha256:${"0".repeat(64)}`,
+    `Private release ${field} is invalid`
+  );
+}
 assert(packageMetadata?.devDependencies?.wrangler === "4.112.0", "package.json must pin the reviewed Wrangler version exactly");
 assert(wranglerPackage?.version === packageMetadata.devDependencies.wrangler, "Installed local Wrangler does not match the exact package.json pin");
 assert(typeof wranglerPackage?.bin?.wrangler === "string", "Pinned local Wrangler executable is missing");

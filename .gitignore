@@ -15,7 +15,8 @@ dist/
 /scoring/
 /src/
 /tools/
-/test/
+/test/*
+!/test/randomization-design.test.mjs
 /index.html
 cloudflare/private/
 cloudflare/exports/
