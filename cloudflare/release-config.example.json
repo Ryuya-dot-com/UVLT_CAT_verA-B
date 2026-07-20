@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "uvlt-fixed-ab-field-release-config-2",
+  "releaseId": "uvlt-fixed-ab-unapproved-20260720",
+  "appVersion": "0.1.0-dev",
+  "createdAt": "2026-07-20T00:00:00.000Z",
+  "frozenAt": null,
+  "active": false,
+  "participantHmacKeyFingerprint": null,
+  "prolificCompletionCodeFingerprint": null,
+  "prolificCompletionAction": null,
+  "expectedHashes": {
+    "runtimeManifestPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "bankPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "routesPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "publicBuildManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "approvals": {
+    "contentOwnerApprovalRecorded": false,
+    "authoritativeAnswerKeyApprovalRecorded": false,
+    "participantInformationAndConsentApproved": false,
+    "japaneseAndVietnameseInstructionReviewRecorded": false,
+    "timingPilotCompleted": false,
+    "ethicsApprovalRecorded": false,
+    "privacyRetentionDeletionPlanRecorded": false,
+    "protectedDataReceiptVerified": false,
+    "independentPrelaunchReviewCompleted": false
+  },
+  "studies": []
+}

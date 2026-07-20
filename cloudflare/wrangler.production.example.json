@@ -1,0 +1,59 @@
+{
+  "name": "uvlt-fixed-ab-calibration",
+  "main": "../worker/index.ts",
+  "compatibility_date": "2026-07-20",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [
+    {
+      "pattern": "uvlt-study.example.edu",
+      "custom_domain": true
+    }
+  ],
+  "assets": {
+    "directory": "../../dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "uvlt-fixed-ab-calibration-production",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../migrations"
+    }
+  ],
+  "vars": {
+    "COLLECTION_MODE": "field",
+    "EXPECTED_RELEASE_ID": "REPLACE_WITH_FROZEN_RELEASE_ID",
+    "EXPECTED_APP_VERSION": "REPLACE_WITH_PACKAGE_VERSION",
+    "EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "EXPECTED_RUNTIME_MANIFEST_SHA256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "EXPECTED_BANK_SHA256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "EXPECTED_ROUTES_SHA256": "REPLACE_WITH_64_LOWERCASE_HEX",
+    "EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT": "sha256:REPLACE_WITH_64_LOWERCASE_HEX",
+    "EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT": "sha256:REPLACE_WITH_64_LOWERCASE_HEX",
+    "EXPECTED_PROLIFIC_COMPLETION_ACTION": "REPLACE_WITH_MANUALLY_REVIEW_OR_AUTOMATICALLY_APPROVE",
+    "PROLIFIC_API_BASE_URL": "https://api.prolific.com"
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false,
+      "head_sampling_rate": 0
+    }
+  }
+}

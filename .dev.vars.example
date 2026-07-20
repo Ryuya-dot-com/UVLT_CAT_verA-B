@@ -1,0 +1,4 @@
+# Copy to .dev.vars for local integration testing only. Never commit real values.
+PARTICIPANT_HMAC_KEY=replace-with-at-least-32-random-bytes
+PROLIFIC_API_TOKEN=replace-with-a-test-or-researcher-token
+PROLIFIC_COMPLETION_CODE=replace-with-a-preview-completion-code

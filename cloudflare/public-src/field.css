@@ -1,0 +1,50 @@
+.study-progress {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+:where(button, input, .matrix-scroll):focus-visible {
+  outline: 3px solid rgba(8, 126, 139, .42);
+  outline-offset: 3px;
+}
+
+.matrix-choice:has(input:focus-visible) {
+  background: var(--mint);
+}
+
+.break-confirmation {
+  justify-content: center;
+  margin: 1.25rem auto 0;
+  width: fit-content;
+  text-align: left;
+}
+
+@media (max-width: 760px) {
+  .study-progress {
+    grid-template-columns: 1fr;
+  }
+
+  .header-meta .save-state {
+    display: block;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+}

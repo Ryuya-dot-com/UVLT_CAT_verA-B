@@ -1,0 +1,34 @@
+{
+  "name": "uvlt-fixed-ab-cloudflare-runtime",
+  "version": "0.1.0-dev",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.6.0",
+  "engines": {
+    "node": "24.9.x",
+    "npm": "11.6.x"
+  },
+  "scripts": {
+    "build:field": "node cloudflare/tools/build-public.mjs",
+    "build:private-seed": "node cloudflare/tools/build-private-seed.mjs",
+    "audit:field": "node cloudflare/tools/audit-public.mjs",
+    "check:cloudflare-tools": "node --check cloudflare/tools/build-public.mjs && node --check cloudflare/tools/audit-public.mjs && node --check cloudflare/tools/build-private-seed.mjs && node --check cloudflare/tools/verify-deployment-config.mjs && node --check cloudflare/tools/verify-remote-secrets.mjs && node --check cloudflare/tools/deploy-production.mjs",
+    "test": "npm run test:worker",
+    "test:worker": "vitest run --config cloudflare/vitest.config.ts",
+    "types:worker": "wrangler types --config wrangler.jsonc cloudflare/worker-configuration.d.ts",
+    "typecheck:worker": "tsc --project cloudflare/tsconfig.json --noEmit",
+    "check:worker": "npm run build:field && npm run audit:field && npm run check:cloudflare-tools && npm run types:worker && npm run typecheck:worker && npm run test:worker && wrangler deploy --config wrangler.jsonc --env= --dry-run --outdir .wrangler-dry-run",
+    "verify:remote-secrets": "node cloudflare/tools/verify-remote-secrets.mjs --wrangler-config cloudflare/private/wrangler.production.json",
+    "release:field-gate": "npm run build:field && npm run audit:field && node cloudflare/tools/build-private-seed.mjs --config cloudflare/private/release-config.json --output cloudflare/private/runtime-seed.sql --require-active && node cloudflare/tools/verify-deployment-config.mjs --release-config cloudflare/private/release-config.json --wrangler-config cloudflare/private/wrangler.production.json && npm run verify:remote-secrets && npm run types:worker && npm run typecheck:worker && npm run test:worker && node cloudflare/tools/deploy-production.mjs --dry-run",
+    "predeploy": "npm run release:field-gate",
+    "deploy": "node cloudflare/tools/deploy-production.mjs",
+    "build": "npm run check:worker"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.18.6",
+    "@types/node": "26.1.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.10",
+    "wrangler": "4.112.0"
+  }
+}
