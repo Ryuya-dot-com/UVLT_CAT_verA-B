@@ -1,10 +1,23 @@
-# UVLT Form A+B Cloudflare–Prolific Runtime
+# UVLT Form A+B — GitHub Pages and Cloudflare Runtime
 
-This repository contains the code-only, collection-disabled runtime for a proposed fixed-form joint calibration of UVLT Forms A and B. It uses Cloudflare Workers, D1, and Prolific Study/launch/submission verification.
+This repository contains two delivery paths for the fixed-form joint administration of UVLT Forms A and B:
+
+- a static GitHub Pages version that saves each participant's result as a local CSV for manual Google Classroom submission; and
+- a separate collection-disabled Cloudflare Workers/D1/Prolific engineering runtime.
+
+## GitHub Pages participant version
+
+The Pages site is published from the root of `main` at <https://ryuya-dot-com.github.io/UVLT_CAT_verA-B/>. It requires only the participant's name and student ID. No affiliation, L1, email address, Prolific identifier, or Classroom credential is requested.
+
+All 100 A+B testlets (300 responses) run in the browser. One of the ten existing Williams routes is selected with browser cryptographic randomness, and the selected route and module positions are included in the result. Responses and identity are kept in memory only: the site does not send them to a server and does not use browser storage. Reloading or closing the page before completion therefore loses the unfinished session.
+
+At completion, an Excel-compatible UTF-8 CSV is downloaded automatically. The completion screen can download the same immutable result again if the browser blocks or hides the first download. The filename contains a random submission code rather than the participant's name or student ID; both identifying fields are recorded inside the CSV. Participants submit that CSV separately in Google Classroom.
+
+The checked-in Pages data contains the authorized public prompts, options, and Williams routes. Its release metadata records the repository owner's 2026-07-22 authorization for public problem display and participant administration. The public package remains keyless and contains no scoring registry or IRT item parameters.
 
 ## Status
 
-This is an engineering preview, not an authorized participant study. The checked-in configuration fails closed: it has placeholder D1 bindings, `COLLECTION_MODE=technical_only`, unconfigured release/app/build identities, no secrets, and no active Study IDs.
+The preceding Pages version is operationally independent of the Cloudflare runtime and performs no server-side collection. The Cloudflare path remains an engineering preview rather than an active Prolific study. Its checked-in configuration fails closed: it has placeholder D1 bindings, `COLLECTION_MODE=technical_only`, unconfigured release/app/build identities, no secrets, and no active Study IDs.
 
 Version `0.2.0-dev` implements the collection-disabled schema-v7 administration contract. One synthetic interaction-practice set precedes the protected main bank; the server retains only its versioned completion marker, not its selections, correctness, score, or response time. Nine server-observed breaks follow Modules 1–9: eight require at least 45 seconds and the midpoint break after Module 5 requires at least 90 seconds. A participant may safely pause only from the break screen after a module-boundary save has been confirmed. Safe pause records no response, pause reason, focus event, or extra timestamp, and resume preserves the original server-side assignment.
 
@@ -12,13 +25,13 @@ This GitHub repository and its commit history are not an anonymous-review artifa
 
 The repository intentionally excludes:
 
-- UVLT stimuli and source workbooks;
+- source workbooks and non-Pages content snapshots;
 - answer keys, scoring registries, and IRT parameters;
 - private D1 seeds or exports;
 - participant-level data and Prolific identifiers;
 - HMAC keys, API tokens, and completion codes.
 
-No permission to reproduce or redistribute UVLT content is conveyed by this code repository.
+The Pages release metadata documents the authorization applied to the checked-in keyless public package; it does not make claims about rights outside that recorded release scope.
 
 ## Runtime boundary
 
@@ -42,6 +55,14 @@ Use Node 24.9.0 and the exact npm lockfile:
 npm ci
 npm run build
 ```
+
+For the dependency-free Pages checks alone:
+
+```bash
+npm run check:pages
+```
+
+The Pages checks validate the root-relative site contract, explicit public/participant authorization flags, the keyless 100-testlet/300-item bank, all ten route artifacts, cryptographic route selection, required identity fields, CSV formula protection, PII-free filenames, and byte-stable repeat downloads.
 
 The randomization suite uses only synthetic module/testlet labels and checks the canonical-first Williams square, HMAC counter RNG, exact 840-slot block/crossing constraints, route and route × layout prefix balance, fixed known-answer hash, tamper rejection, and stimulus-free aggregate audit. The attrition analysis is byte-for-byte reproducible and reports its public seed, algorithm, software environment, assumptions, limitations, exact tails, Monte Carlo uncertainty, and artifact hash. The Worker integration suite applies the real D1 migration to an isolated database and uses only synthetic testlets. It checks fail-closed configuration, immutable active release/session assignment, exact Worker-version and release-binding digests, canonical D1 projection hashing (including coordinated content/self-hash mutation and balanced-route relabeling), allocation-row hashing, 300-completer L1-specific stopping, the 420-start cap, partial-session resume, allocation-index nonreuse, option placement and stored display position, live Prolific Study/submission verification, copied-launch rejection, raw-ID non-exposure, cookie-bound session resume, idempotent writes, conflicts, token expiry, mandatory practice completion without retained practice choices, exact 44,999/45,000 ms and 89,999/90,000 ms break boundaries, reload-safe countdown behavior, all 100 testlets and nine breaks, completion-code withholding/release, and mismatched app/build/secret/action/version/policy identities.
 
