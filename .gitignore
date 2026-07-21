@@ -25,7 +25,10 @@ dist/
 !/test/attrition-reserve-simulation.test.mjs
 !/test/field-ux.test.mjs
 !/test/version-workflow-validation.test.mjs
-/index.html
+!/test/pages-contract.test.mjs
+!/test/pages-bank.test.mjs
+!/test/pages-routes.test.mjs
+!/test/pages-result.test.mjs
 cloudflare/private/
 cloudflare/exports/
 cloudflare/backups/
@@ -39,6 +42,8 @@ cloudflare/worker-configuration.d.ts
 *.xls
 *.csv
 !/design/results/attrition-reserve-results.csv
+!/pages/data/uvlt_bank.ab.content.json
+!/pages/data/uvlt_routes.ab.williams10.json
 *.tsv
 *.parquet
 *.feather
