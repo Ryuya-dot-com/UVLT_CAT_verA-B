@@ -1,0 +1,103 @@
+{
+  "schemaVersion": "uvlt-fixed-ab-field-release-config-7",
+  "releaseId": "uvlt-fixed-ab-unapproved-20260721",
+  "appVersion": "0.2.0-dev",
+  "workerVersionId": null,
+  "createdAt": "2026-07-20T00:00:00.000Z",
+  "frozenAt": null,
+  "active": false,
+  "randomizationSeedFingerprint": null,
+  "randomizationAlgorithm": null,
+  "optionLayoutAlgorithm": null,
+  "participantHmacKeyFingerprint": null,
+  "prolificCompletionCodeFingerprint": null,
+  "prolificCompletionAction": null,
+  "recruitmentPolicy": {
+    "targetProtocolCompletersPerL1": 300,
+    "hardCapStartsPerL1": 420,
+    "stopNewAllocationsAtTarget": true,
+    "retainServerCommittedPartialResponses": true,
+    "protocolCompletionDefinition": "d1-completed-after-practice-100-testlets-300-responses-8x45s-plus-midpoint90s-breaks-v2",
+    "partialResponseRetentionDefinition": "consented-nonwithdrawn-server-committed-complete-testlets-v1"
+  },
+  "administrationPolicy": {
+    "schemaVersion": "uvlt-fixed-ab-administration-policy-1",
+    "preparation": {
+      "definition": "single-readiness-screen-before-interface-practice-v1",
+      "responsePersisted": false
+    },
+    "practice": {
+      "completionEventPersisted": true,
+      "definition": "one-synthetic-interface-only-three-row-six-symbol-practice-v1",
+      "enabled": true,
+      "feedback": "generic-validity-only",
+      "mainResponseCountsAffected": false,
+      "requiredBeforeFirstMainTestlet": true,
+      "responsesPersisted": false
+    },
+    "breaks": {
+      "backgroundAndReloadTimeCounts": true,
+      "completionDependent": true,
+      "count": 9,
+      "definition": "server-minimum-45s-standard-90s-after-module-5-v1",
+      "elapsedFrom": "module-final-testlet-server-received-at",
+      "midpointAfterModule": 5,
+      "midpointMinimumSeconds": 90,
+      "serverClockAuthoritative": true,
+      "standardMinimumSeconds": 45
+    },
+    "progress": {
+      "definition": "neutral-module-set-and-server-committed-count-v1",
+      "showsEstimatedTime": false,
+      "showsOtherParticipantComparison": false,
+      "showsScore": false,
+      "showsSpeed": false
+    },
+    "safeInterruption": {
+      "availableAt": "required-break-screens-only",
+      "definition": "break-boundary-guidance-without-server-event-v1",
+      "prolificTimerContinues": true
+    },
+    "unsavedResponseGuard": {
+      "definition": "beforeunload-only-after-main-selection-until-server-confirmation-v1",
+      "transmitsUnsubmittedSelections": false
+    },
+    "processData": {
+      "breakTiming": "derived-from-module-final-server-receipt-and-break-event-v1",
+      "clientTiming": "wall-start-submit-plus-monotonic-testlet-elapsed-v1",
+      "focusVisibilityEventsPersisted": false,
+      "qualityFlagsComputedAtRuntime": false,
+      "rawInputEventsPersisted": false,
+      "schemaVersion": "uvlt-fixed-ab-process-data-1",
+      "unsubmittedSelectionsPersisted": false
+    }
+  },
+  "expectedHashes": {
+    "administrationPolicySha256": "55588091b7c85cf698e076283503c663eaacf77540d3ec9d03abf5b06b229b43",
+    "runtimeManifestPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "bankPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "routesPayloadSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "runtimeBankProjectionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "runtimeRoutesProjectionSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "allocationScheduleSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "publicBuildManifestSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "approvals": {
+    "contentOwnerApprovalRecorded": false,
+    "authoritativeAnswerKeyApprovalRecorded": false,
+    "participantInformationAndConsentApproved": false,
+    "japaneseAndVietnameseInstructionReviewRecorded": false,
+    "timingPilotCompleted": false,
+    "ethicsApprovalRecorded": false,
+    "privacyRetentionDeletionPlanRecorded": false,
+    "protectedDataReceiptVerified": false,
+    "privateWorkspaceApprovalRecorded": false,
+    "randomizationScheduleReviewRecorded": false,
+    "attritionReplacementPolicyRecorded": false,
+    "administrationPolicyIndependentReviewRecorded": false,
+    "processDataEthicsPrivacyConsentApproved": false,
+    "attentionAnalysisPreregistrationRecorded": false,
+    "independentPrelaunchReviewCompleted": false
+  },
+  "studies": []
+}

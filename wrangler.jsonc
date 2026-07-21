@@ -1,0 +1,145 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "uvlt-fixed-ab-calibration-local",
+  "main": "./cloudflare/worker/index.ts",
+  "compatibility_date": "2026-07-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "none"
+  },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "uvlt-fixed-ab-calibration",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "./cloudflare/migrations"
+    }
+  ],
+  "vars": {
+    "COLLECTION_MODE": "technical_only",
+    "EXPECTED_RELEASE_ID": "UNCONFIGURED",
+    "EXPECTED_APP_VERSION": "UNCONFIGURED",
+    "EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256": "UNCONFIGURED",
+    "EXPECTED_RUNTIME_MANIFEST_SHA256": "UNCONFIGURED",
+    "EXPECTED_BANK_SHA256": "UNCONFIGURED",
+    "EXPECTED_ROUTES_SHA256": "UNCONFIGURED",
+    "EXPECTED_RUNTIME_BANK_PROJECTION_SHA256": "UNCONFIGURED",
+    "EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256": "UNCONFIGURED",
+    "EXPECTED_ALLOCATION_SCHEDULE_SHA256": "UNCONFIGURED",
+    "EXPECTED_ADMINISTRATION_POLICY_SHA256": "UNCONFIGURED",
+    "EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT": "UNCONFIGURED",
+    "EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT": "UNCONFIGURED",
+    "EXPECTED_PROLIFIC_COMPLETION_ACTION": "UNCONFIGURED",
+    "PROLIFIC_API_BASE_URL": "https://api.prolific.com"
+  },
+  "secrets": {
+    "required": [
+      "PARTICIPANT_HMAC_KEY",
+      "PROLIFIC_API_TOKEN",
+      "PROLIFIC_COMPLETION_CODE"
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false,
+      "head_sampling_rate": 0
+    }
+  },
+  "env": {
+    "staging": {
+      "name": "uvlt-fixed-ab-calibration-staging",
+      "workers_dev": true,
+      "preview_urls": false,
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "uvlt-fixed-ab-calibration-staging",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "./cloudflare/migrations"
+        }
+      ],
+      "vars": {
+        "COLLECTION_MODE": "technical_only",
+        "EXPECTED_RELEASE_ID": "UNCONFIGURED",
+        "EXPECTED_APP_VERSION": "UNCONFIGURED",
+        "EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256": "UNCONFIGURED",
+        "EXPECTED_RUNTIME_MANIFEST_SHA256": "UNCONFIGURED",
+        "EXPECTED_BANK_SHA256": "UNCONFIGURED",
+        "EXPECTED_ROUTES_SHA256": "UNCONFIGURED",
+        "EXPECTED_RUNTIME_BANK_PROJECTION_SHA256": "UNCONFIGURED",
+        "EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256": "UNCONFIGURED",
+        "EXPECTED_ALLOCATION_SCHEDULE_SHA256": "UNCONFIGURED",
+        "EXPECTED_ADMINISTRATION_POLICY_SHA256": "UNCONFIGURED",
+        "EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT": "UNCONFIGURED",
+        "EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT": "UNCONFIGURED",
+        "EXPECTED_PROLIFIC_COMPLETION_ACTION": "UNCONFIGURED",
+        "PROLIFIC_API_BASE_URL": "https://api.prolific.com"
+      },
+      "secrets": {
+        "required": [
+          "PARTICIPANT_HMAC_KEY",
+          "PROLIFIC_API_TOKEN",
+          "PROLIFIC_COMPLETION_CODE"
+        ]
+      }
+    },
+    "production": {
+      "name": "uvlt-fixed-ab-calibration-production",
+      "workers_dev": false,
+      "preview_urls": false,
+      "version_metadata": {
+        "binding": "CF_VERSION_METADATA"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "uvlt-fixed-ab-calibration-production",
+          "database_id": "00000000-0000-0000-0000-000000000000",
+          "migrations_dir": "./cloudflare/migrations"
+        }
+      ],
+      "vars": {
+        "COLLECTION_MODE": "technical_only",
+        "EXPECTED_RELEASE_ID": "UNCONFIGURED",
+        "EXPECTED_APP_VERSION": "UNCONFIGURED",
+        "EXPECTED_PUBLIC_BUILD_MANIFEST_SHA256": "UNCONFIGURED",
+        "EXPECTED_RUNTIME_MANIFEST_SHA256": "UNCONFIGURED",
+        "EXPECTED_BANK_SHA256": "UNCONFIGURED",
+        "EXPECTED_ROUTES_SHA256": "UNCONFIGURED",
+        "EXPECTED_RUNTIME_BANK_PROJECTION_SHA256": "UNCONFIGURED",
+        "EXPECTED_RUNTIME_ROUTES_PROJECTION_SHA256": "UNCONFIGURED",
+        "EXPECTED_ALLOCATION_SCHEDULE_SHA256": "UNCONFIGURED",
+        "EXPECTED_ADMINISTRATION_POLICY_SHA256": "UNCONFIGURED",
+        "EXPECTED_PARTICIPANT_HMAC_KEY_FINGERPRINT": "UNCONFIGURED",
+        "EXPECTED_PROLIFIC_COMPLETION_CODE_FINGERPRINT": "UNCONFIGURED",
+        "EXPECTED_PROLIFIC_COMPLETION_ACTION": "UNCONFIGURED",
+        "PROLIFIC_API_BASE_URL": "https://api.prolific.com"
+      },
+      "secrets": {
+        "required": [
+          "PARTICIPANT_HMAC_KEY",
+          "PROLIFIC_API_TOKEN",
+          "PROLIFIC_COMPLETION_CODE"
+        ]
+      }
+    }
+  }
+}
