@@ -9,7 +9,15 @@ This repository contains two delivery paths for the fixed-form joint administrat
 
 The Pages site is published from the root of `main` at <https://ryuya-dot-com.github.io/UVLT_CAT_verA-B/>. It requires only the participant's name and student ID. No affiliation, L1, email address, Prolific identifier, or Classroom credential is requested.
 
-All 100 A+B testlets (300 responses) run in the browser. One of the ten existing Williams routes is selected with browser cryptographic randomness, and the selected route and module positions are included in the result. Responses and identity are kept in memory only: the site does not send them to a server and does not use browser storage. Reloading or closing the page before completion therefore loses the unfinished session.
+Researcher link directory: <https://ryuya-dot-com.github.io/UVLT_CAT_verA-B/researcher.html>.
+
+- A+B (100 testlets / 300 responses): <https://ryuya-dot-com.github.io/UVLT_CAT_verA-B/?form=AB>
+- A only (50 testlets / 150 responses): <https://ryuya-dot-com.github.io/UVLT_CAT_verA-B/?form=A>
+- B only (50 testlets / 150 responses): <https://ryuya-dot-com.github.io/UVLT_CAT_verA-B/?form=B>
+
+Omitting `form` preserves the existing A+B administration. Invalid or repeated `form` values prevent starting, so a malformed link cannot silently administer the wrong form. A+B selects one of the ten existing Williams routes with browser cryptographic randomness. Single-form administrations use canonical 1K–5K / within-band testlet order, recorded as `A-canonical-v1` or `B-canonical-v1`; these are not Williams-balanced joint administrations. Every route retains intact three-item testlets and a break after each nonfinal ten-testlet module.
+
+All responses run in the browser. The selected route and actual module positions are included in the result. CSV schema `uvlt-pages-result-v2` adds `administration_form` (`AB`, `A`, or `B`); the filename also identifies the form, and the runtime version is `pages-v2-20261001`. Item-level `form_id` remains unchanged. Responses and identity are kept in memory only: the site does not send them to a server and does not use browser storage. Reloading or closing the page before completion therefore loses the unfinished session.
 
 At completion, an Excel-compatible UTF-8 CSV is downloaded automatically. The completion screen can download the same immutable result again if the browser blocks or hides the first download. The filename contains a random submission code rather than the participant's name or student ID; both identifying fields are recorded inside the CSV. Participants submit that CSV separately in Google Classroom.
 

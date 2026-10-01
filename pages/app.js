@@ -3,9 +3,11 @@ import {
   createSubmissionCode,
   normalizeIdentity,
   triggerResultDownload
-} from "./result-export.js";
+} from "./result-export.js?v=pages-v2-20261001";
 import { normalizePublicBank } from "./bank.js";
-import { chooseRandomRoute, normalizePublicRoutes } from "./routes.js";
+import { chooseRandomRoute, normalizePublicRoutes, parseAdministrationForm, singleFormRoute } from "./routes.js?v=pages-v2-20261001";
+
+const APP_VERSION = "pages-v2-20261001";
 
 const BANK_URL = new URL("./data/uvlt_bank.ab.content.json", import.meta.url);
 const ROUTES_URL = new URL("./data/uvlt_routes.ab.williams10.json", import.meta.url);
@@ -15,6 +17,7 @@ const progressTrack = document.getElementById("progress-track");
 const progressFill = document.getElementById("progress-fill");
 
 const state = {
+  form: "AB",
   bank: null,
   routes: null,
   route: null,
@@ -48,12 +51,21 @@ function renderLoadError(message) {
 }
 
 function renderIdentityForm() {
+  const label = state.form === "AB" ? "Form A + Form B" : `Form ${state.form}`;
+  const total = state.routes[0].testlets.length;
+  document.title = `UVLT ${label}`;
+  const brand = document.querySelector(".brand");
+  brand.href = `?form=${state.form}`;
+  brand.setAttribute("aria-label", `UVLT ${label} ホーム`);
+  brand.querySelector(".brand-mark").textContent = state.form;
+  brand.querySelector("small").textContent = label;
   progressTrack.hidden = true;
   root.setAttribute("aria-busy", "false");
   root.innerHTML = `<section class="panel intro-panel">
     <p class="eyebrow">Updated Vocabulary Levels Test</p>
-    <h1>Form A + Form B</h1>
+    <h1>${label}</h1>
     <p class="lead">氏名と学籍番号を入力してテストを開始してください。</p>
+    <p>全${total}セット・${total * 3}問です。10セットごとに休憩できます。</p>
     <div class="notice privacy-note">
       <strong>このページから回答は送信されません。</strong>
       <span>完了時に結果CSVが端末へ自動保存されます。保存したファイルをGoogle Classroomで提出してください。</span>
@@ -80,7 +92,7 @@ function renderIdentityForm() {
       </ul>
     </details>
   </section>`;
-  localState.textContent = `問題データ確認済み · ${state.bank.testlets.length}セット`;
+  localState.textContent = `問題データ確認済み · ${total}セット`;
   const form = root.querySelector("#identity-form");
   form.addEventListener("submit", event => {
     event.preventDefault();
@@ -96,8 +108,9 @@ function renderIdentityForm() {
         identity,
         submissionCode: createSubmissionCode(),
         routeId: route.routeId,
+        administrationForm: state.form,
         releaseId: state.bank.releaseId,
-        appVersion: state.bank.appVersion,
+        appVersion: APP_VERSION,
         startedAt: new Date().toISOString(),
         completedAt: null,
         responses: []
@@ -287,6 +300,7 @@ window.addEventListener("beforeunload", event => {
 
 async function initialise() {
   try {
+    state.form = parseAdministrationForm(location.search);
     const [bankResponse, routesResponse] = await Promise.all([
       fetch(BANK_URL, { cache: "no-store", credentials: "same-origin" }),
       fetch(ROUTES_URL, { cache: "no-store", credentials: "same-origin" })
@@ -295,6 +309,7 @@ async function initialise() {
     if (!routesResponse.ok) throw new Error(`実施経路の取得に失敗しました（${routesResponse.status}）。`);
     state.bank = normalizePublicBank(await bankResponse.json());
     state.routes = normalizePublicRoutes(await routesResponse.json(), state.bank);
+    if (state.form !== "AB") state.routes = [singleFormRoute(state.bank, state.form)];
     renderIdentityForm();
   } catch (error) {
     renderLoadError(error.message || "問題データを読み込めませんでした。");

@@ -1,4 +1,4 @@
-export const RESULT_SCHEMA_VERSION = "uvlt-pages-result-v1";
+export const RESULT_SCHEMA_VERSION = "uvlt-pages-result-v2";
 
 const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/g;
 const SPREADSHEET_FORMULA_PATTERN = /^[\s]*[=+\-@]/;
@@ -53,6 +53,7 @@ const RESULT_COLUMNS = Object.freeze([
   "student_id",
   "started_at",
   "completed_at",
+  "administration_form",
   "testlet_ordinal",
   "route_id",
   "form_id",
@@ -84,7 +85,8 @@ export function buildResultCsv(session) {
     participant_name: identity.participantName,
     student_id: identity.studentId,
     started_at: session.startedAt,
-    completed_at: session.completedAt
+    completed_at: session.completedAt,
+    administration_form: session.administrationForm || "AB"
   };
   const rows = responses.map(response => ({ ...shared, ...response }));
   const lines = [RESULT_COLUMNS.map(csvCell).join(",")];
@@ -94,18 +96,19 @@ export function buildResultCsv(session) {
   return `\uFEFF${lines.join("\r\n")}\r\n`;
 }
 
-export function buildResultFilename(submissionCode) {
+export function buildResultFilename(submissionCode, form = "AB") {
+  if (!["AB", "A", "B"].includes(form)) throw new Error("実施フォームが正しくありません。");
   const normalized = String(submissionCode || "")
     .toUpperCase()
     .replace(/[^A-Z0-9-]/g, "")
     .slice(0, 32);
   if (!normalized) throw new Error("安全なファイル名を作成できません。");
-  return `UVLT_AB_result_${normalized}.csv`;
+  return `UVLT_${form}_result_${normalized}.csv`;
 }
 
 export function createResultSnapshot(session) {
   return Object.freeze({
-    filename: buildResultFilename(session?.submissionCode),
+    filename: buildResultFilename(session?.submissionCode, session?.administrationForm),
     csv: buildResultCsv(session)
   });
 }

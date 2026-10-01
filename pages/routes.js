@@ -4,6 +4,33 @@ function requireString(value, label) {
   return text;
 }
 
+export function parseAdministrationForm(search) {
+  const values = new URLSearchParams(search).getAll("form");
+  const form = values.length === 0 ? "AB" : values[0].toUpperCase();
+  if (values.length > 1 || !["AB", "A", "B"].includes(form)) {
+    throw new Error("実施リンクのformはAB・A・Bのいずれか1つを指定してください。");
+  }
+  return form;
+}
+
+export function singleFormRoute(bank, form) {
+  if (!["A", "B"].includes(form)) throw new Error("単独実施はAまたはBを指定してください。");
+  const testlets = bank.testlets.filter(testlet => testlet.formId === form)
+    .sort((a, b) => a.testletId.localeCompare(b.testletId));
+  const bands = ["1k", "2k", "3k", "4k", "5k"];
+  if (testlets.length !== 50 || bands.some(band => testlets.filter(t => t.band === band).length !== 10)) {
+    throw new Error(`Form ${form}の50セットを確認できません。`);
+  }
+  return Object.freeze({
+    routeId: `${form}-canonical-v1`,
+    testlets: Object.freeze(testlets.map((testlet, index) => Object.freeze({
+      ...testlet,
+      modulePosition: Math.floor(index / 10) + 1,
+      testletPositionWithinModule: index % 10 + 1
+    })))
+  });
+}
+
 function assertPublicationAllowed(raw) {
   if (raw?.distribution?.publicReleaseAllowed !== true) {
     throw new Error("この経路データは公開用として承認されていません。");
